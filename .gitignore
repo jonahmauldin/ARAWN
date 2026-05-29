@@ -1,0 +1,36 @@
+# ============================================================
+#  ARAWN — public-repo hygiene
+#  NEVER commit real secrets, keystores, or machine-local paths.
+# ============================================================
+
+# Secrets surfaced via the secrets-gradle-plugin (real values live here).
+secrets.properties
+
+# Gradle / Android local machine config (contains absolute SDK paths).
+local.properties
+
+# Build output
+.gradle/
+build/
+app/build/
+*/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.DS_Store
+captures/
+
+# Signing material — must never be public
+*.jks
+*.keystore
+keystore.properties
+
+# Room exported schemas only if they contain nothing sensitive (kept by default)
+# /app/schemas/  <- uncomment to ignore
+
+# Logs
+*.log
+
+# Internal design docs — kept local, never published
+MASTER ARCHITECTURE & SPECIFICATION DOCUMENT.txt
