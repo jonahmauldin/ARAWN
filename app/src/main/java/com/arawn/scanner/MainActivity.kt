@@ -52,6 +52,7 @@ import android.widget.Toast
 import com.arawn.scanner.db.ArawnDatabase
 import com.arawn.scanner.db.CoordinatePair
 import com.arawn.scanner.export.DataLogBackupExporter
+import com.arawn.scanner.export.HtmlReportExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.OfflineMapPanel
 import kotlinx.coroutines.launch
@@ -148,6 +149,7 @@ class MainActivity : ComponentActivity() {
                     onStop = { stopTracking() },
                     onClear = { lines.clear() },
                     onExport = { exportLatestSession() },
+                    onReport = { generateHtmlReport() },
                 )
             }
         }
@@ -236,6 +238,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun generateHtmlReport() {
+        lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "Generating report…", Toast.LENGTH_SHORT).show()
+            val result = HtmlReportExporter(applicationContext).exportLatestSession()
+            Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun requiredPermissions(): List<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -315,6 +325,7 @@ private fun ScannerScreen(
     onStop: () -> Unit,
     onClear: () -> Unit,
     onExport: () -> Unit,
+    onReport: () -> Unit,
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
         Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
@@ -462,19 +473,34 @@ private fun ScannerScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // Low-profile export action — dumps the latest session to a WiGLE CSV
-            // in Documents/ARAWN/ (Phase 4). Enabled even while idle.
-            Button(
-                onClick = onExport,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = "⤓ EXPORT LOG DATA",
-                    fontFamily = FontFamily.Monospace,
-                    color = Amber,
-                    fontSize = 13.sp,
-                )
+                Button(
+                    onClick = onExport,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+                ) {
+                    Text(
+                        text = "⤓ EXPORT CSV",
+                        fontFamily = FontFamily.Monospace,
+                        color = Amber,
+                        fontSize = 12.sp,
+                    )
+                }
+                Button(
+                    onClick = onReport,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+                ) {
+                    Text(
+                        text = "⊞ HTML REPORT",
+                        fontFamily = FontFamily.Monospace,
+                        color = Amber,
+                        fontSize = 12.sp,
+                    )
+                }
             }
         }
     }
