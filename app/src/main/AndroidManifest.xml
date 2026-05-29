@@ -42,6 +42,15 @@
         android:maxSdkVersion="30" />
 
     <!-- ============================================================= -->
+    <!--  NETWORK                                                      -->
+    <!--  Used ONLY to download OpenStreetMap basemap tiles for the    -->
+    <!--  map view. No scan data (Wi-Fi/BLE/GPS logs) is ever          -->
+    <!--  transmitted — only tile-image requests leave the device.     -->
+    <!-- ============================================================= -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ============================================================= -->
     <!--  FOREGROUND SERVICE                                           -->
     <!--  Android 14 (API 34) requires a type-specific permission for  -->
     <!--  every declared foregroundServiceType.                        -->

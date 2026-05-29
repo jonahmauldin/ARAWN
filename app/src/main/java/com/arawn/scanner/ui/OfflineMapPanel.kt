@@ -24,14 +24,14 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 
 /**
- * Offline track viewer for ARAWN (Phase 6).
+ * GPS track viewer for ARAWN (Phase 6).
  *
- * Renders the GPS path of one session over an osmdroid [MapView] that is locked
- * to disk: [MapView.setUseDataConnection]`(false)` cuts every network hook, so
- * the base map comes only from local tile archives (drop a .sqlite/.mbtiles/.zip
- * into osmdroid's cache dir) and the track markers draw on top regardless. There
- * is no INTERNET permission in the manifest, so the offline guarantee holds even
- * if some code path tried to fetch a tile.
+ * Renders the GPS path of one session over an osmdroid [MapView] using online
+ * OpenStreetMap (MAPNIK) base tiles. Only tile-image requests use the network —
+ * the scan database (Wi-Fi/BLE/GPS logs) is never transmitted; this composable
+ * only ever reads coordinates locally to draw markers. To return to a fully
+ * offline basemap, set [MapView.setUseDataConnection]`(false)` and drop a
+ * .sqlite/.mbtiles/.zip tile archive into osmdroid's cache dir.
  *
  * It consumes the lightweight [CoordinatePair] projection (lat/lon/timestamp
  * only) — never the heavy Wi-Fi/BLE subtree — so panning stays smooth.
@@ -49,7 +49,9 @@ fun OfflineMapPanel(
             // Plain app-private prefs (no androidx.preference dependency); this
             // also pins the tile cache under the app's own storage.
             load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
-            userAgentValue = "LocalDataGrapher/1.0"
+            // OSM's tile usage policy requires an identifying User-Agent; the app
+            // package name is the standard, compliant value.
+            userAgentValue = context.packageName
         }
     }
 
@@ -59,7 +61,7 @@ fun OfflineMapPanel(
 
     val mapView = remember {
         MapView(context).apply {
-            setUseDataConnection(false) // strict offline lock, applied immediately
+            setUseDataConnection(true) // online tiles: download the OSM basemap
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             setMinZoomLevel(5.0)
