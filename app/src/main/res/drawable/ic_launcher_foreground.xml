@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Radar / signal glyph, drawn inside the 72x72 adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- outer ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#00FF6A"
+        android:strokeWidth="3"
+        android:pathData="M54,30 a24,24 0 1,0 0.01,0 Z" />
+    <!-- mid ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#00FF6A"
+        android:strokeWidth="2.5"
+        android:pathData="M54,40 a14,14 0 1,0 0.01,0 Z" />
+    <!-- center dot -->
+    <path
+        android:fillColor="#00FF6A"
+        android:pathData="M54,50 a4,4 0 1,0 0.01,0 Z" />
+    <!-- radar sweep -->
+    <path
+        android:strokeColor="#00FF6A"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,54 L74,34" />
+</vector>
