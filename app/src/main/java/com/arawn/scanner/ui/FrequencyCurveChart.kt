@@ -1,5 +1,7 @@
 package com.arawn.scanner.ui
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
@@ -26,14 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arawn.scanner.WifiObservation
@@ -52,6 +54,11 @@ import kotlinx.coroutines.launch
  * it filters to the selected [SpectrumBand], maps the maths, and redraws. As new
  * [com.arawn.scanner.ScanPacket]s arrive the list changes, each curve's apex
  * animates toward the new reading, and the canvas recomposes in real time.
+ *
+ * Axis labels are drawn with the native Android [Paint] text API rather than the
+ * Compose on-canvas text APIs: the latter proved fragile across runtime versions
+ * and could hard-crash the tab. The whole draw pass is additionally guarded so a
+ * visualization fault can never force-close the app.
  */
 
 /** The three numeric frequency windows the chart can display. */
@@ -145,18 +152,23 @@ fun FrequencyCurveChart(
                 .background(PanelBlack, RoundedCornerShape(6.dp))
                 .padding(8.dp),
         ) {
-            val textMeasurer = rememberTextMeasurer()
-
             Canvas(modifier = Modifier.fillMaxSize()) {
-                drawGrid(band, textMeasurer)
-                visible.forEach { obs ->
-                    val apex = animated[obs.bssid]?.value ?: rssiFraction(obs.rssiDbm)
-                    drawSignalCurve(
-                        band = band,
-                        centreMhz = obs.frequencyMhz.toFloat(),
-                        apexFraction = apex,
-                        color = CurvePalette[(obs.bssid.hashCode() and Int.MAX_VALUE) % CurvePalette.size],
-                    )
+                // A visualization must never take the app down. If any draw call
+                // throws on a given device/runtime, log it and leave the panel
+                // blank rather than crashing the activity.
+                try {
+                    drawGrid(band)
+                    visible.forEach { obs ->
+                        val apex = animated[obs.bssid]?.value ?: rssiFraction(obs.rssiDbm)
+                        drawSignalCurve(
+                            band = band,
+                            centreMhz = obs.frequencyMhz.toFloat(),
+                            apexFraction = apex,
+                            color = CurvePalette[(obs.bssid.hashCode() and Int.MAX_VALUE) % CurvePalette.size],
+                        )
+                    }
+                } catch (t: Throwable) {
+                    android.util.Log.e("FrequencyCurveChart", "spectrum draw failed", t)
                 }
             }
 
@@ -228,21 +240,25 @@ private fun DrawScope.freqToX(band: SpectrumBand, mhz: Float): Float {
 private fun DrawScope.fractionToY(fraction: Float): Float =
     plotBottom - fraction.coerceIn(0f, 1f) * (plotBottom - plotTop)
 
-/** Draws the bounding grid, dBm rows, and frequency ticks. */
-private fun DrawScope.drawGrid(
-    band: SpectrumBand,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer,
-) {
-    val labelStyle = TextStyle(color = AxisInk, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+/** Builds the monospace axis-label paint, sized in the current density. */
+private fun DrawScope.axisLabelPaint(): Paint = Paint().apply {
+    color = AxisInk.toArgb()
+    textSize = 9.sp.toPx()
+    typeface = Typeface.MONOSPACE
+    isAntiAlias = true
+}
+
+/** Draws the bounding grid, dBm rows, and frequency ticks (native-canvas text). */
+private fun DrawScope.drawGrid(band: SpectrumBand) {
+    val labelPaint = axisLabelPaint()
+    val canvas = drawContext.canvas.nativeCanvas
 
     // Horizontal RSSI gridlines every 10 dBm, with labels on the left.
     var dbm = RSSI_CEILING_DBM
     while (dbm >= RSSI_FLOOR_DBM) {
         val y = fractionToY(rssiFraction(dbm.toInt()))
-        drawLine(GridLine, start = androidx.compose.ui.geometry.Offset(plotLeft, y),
-            end = androidx.compose.ui.geometry.Offset(plotRight, y), strokeWidth = 1f)
-        drawText(textMeasurer, "${dbm.toInt()}", style = labelStyle,
-            topLeft = androidx.compose.ui.geometry.Offset(0f, y - 6f))
+        drawLine(GridLine, start = Offset(plotLeft, y), end = Offset(plotRight, y), strokeWidth = 1f)
+        canvas.drawText("${dbm.toInt()}", 2f, y + 3f, labelPaint)
         dbm -= 10f
     }
 
@@ -251,10 +267,8 @@ private fun DrawScope.drawGrid(
     for (i in 0..divisions) {
         val mhz = band.minMhz + (band.maxMhz - band.minMhz) * i / divisions
         val x = freqToX(band, mhz.toFloat())
-        drawLine(GridLine, start = androidx.compose.ui.geometry.Offset(x, plotTop),
-            end = androidx.compose.ui.geometry.Offset(x, plotBottom), strokeWidth = 1f)
-        drawText(textMeasurer, "$mhz", style = labelStyle,
-            topLeft = androidx.compose.ui.geometry.Offset(x + 2f, plotBottom + 2f))
+        drawLine(GridLine, start = Offset(x, plotTop), end = Offset(x, plotBottom), strokeWidth = 1f)
+        canvas.drawText("$mhz", x + 2f, plotBottom + 12f, labelPaint)
     }
 }
 

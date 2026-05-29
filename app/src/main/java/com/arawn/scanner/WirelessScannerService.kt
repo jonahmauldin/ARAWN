@@ -273,21 +273,48 @@ class WirelessScannerService : Service() {
         startAsForeground()
         startSessionWriter()
 
-        // GPS — high-accuracy continuous fixes.
-        if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
-            try {
-                locationManager?.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    LOCATION_MIN_TIME_MS,
-                    LOCATION_MIN_DIST_M,
-                    locationListener,
-                    Looper.getMainLooper(),
-                )
-            } catch (e: SecurityException) {
-                android.util.Log.w(TAG, "Location updates denied", e)
-            } catch (e: IllegalArgumentException) {
-                android.util.Log.w(TAG, "GPS provider unavailable", e)
+        // Location heartbeat — every fix snapshots Wi-Fi/BLE into a packet. We
+        // listen on BOTH the satellite GPS provider (precise, but outdoor-only and
+        // slow to lock) and the network provider (coarse, but works indoors via
+        // Wi-Fi/cell), so the console and map come alive inside too. Both remain
+        // strictly receive-only — no spec constraint is touched.
+        val lm = locationManager
+        if (lm != null && hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            val providers = buildList {
+                if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                    runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }
+                        .getOrDefault(false)
+                ) {
+                    add(LocationManager.GPS_PROVIDER)
+                }
+                if (runCatching { lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }
+                        .getOrDefault(false)
+                ) {
+                    add(LocationManager.NETWORK_PROVIDER)
+                }
             }
+            providers.forEach { provider ->
+                try {
+                    lm.requestLocationUpdates(
+                        provider,
+                        LOCATION_MIN_TIME_MS,
+                        LOCATION_MIN_DIST_M,
+                        locationListener,
+                        Looper.getMainLooper(),
+                    )
+                } catch (e: SecurityException) {
+                    android.util.Log.w(TAG, "Location updates denied for $provider", e)
+                } catch (e: IllegalArgumentException) {
+                    android.util.Log.w(TAG, "Provider $provider unavailable", e)
+                }
+            }
+
+            // Kickstart: emit one packet from the freshest last-known fix so the
+            // UI populates immediately instead of waiting 30–90s for a cold lock.
+            val lastKnown = providers.asSequence()
+                .mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
+                .maxByOrNull { it.time }
+            if (lastKnown != null) emitPacket(lastKnown)
         }
 
         // Wi-Fi — register receiver + kick the periodic scan loop.
