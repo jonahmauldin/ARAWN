@@ -52,6 +52,7 @@ import android.widget.Toast
 import com.arawn.scanner.db.ArawnDatabase
 import com.arawn.scanner.db.CoordinatePair
 import com.arawn.scanner.export.DataLogBackupExporter
+import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.OfflineMapPanel
@@ -227,14 +228,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Phase 4: dump the most recent session to a WiGLE CSV in Documents/ARAWN/.
-     * Runs entirely on a background coroutine; the result is reported via a
-     * single Toast so it works whether or not a session is currently live.
+     * Dump the most recent session to TWO files in Documents/ARAWN/: the strict
+     * WiGLE-1.6 CSV (unchanged, importable by WiGLE) and the enriched analytics
+     * CSV (vendor + MAC scope + full radio columns). Separate exporters / files
+     * so neither format constrains the other. Runs on a background coroutine;
+     * the combined outcome is reported via a single Toast.
      */
     private fun exportLatestSession() {
         lifecycleScope.launch {
-            val result = DataLogBackupExporter(applicationContext).exportLatestSession()
-            Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
+            val wigle = DataLogBackupExporter(applicationContext).exportLatestSession()
+            val enriched = EnrichedCsvExporter(applicationContext).exportLatestSession()
+            val enrichedNote = when (enriched) {
+                is EnrichedCsvExporter.Result.Success -> "enriched: ${enriched.rows} rows"
+                is EnrichedCsvExporter.Result.Failure -> "enriched failed: ${enriched.message}"
+                EnrichedCsvExporter.Result.NoData,
+                EnrichedCsvExporter.Result.NoSession -> "enriched: no data"
+            }
+            Toast.makeText(
+                this@MainActivity,
+                "${wigle.message}\n$enrichedNote",
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 

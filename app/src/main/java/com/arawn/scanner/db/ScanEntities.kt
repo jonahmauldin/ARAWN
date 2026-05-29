@@ -108,8 +108,9 @@ data class BleDeviceEntity(
     val txPower: Int?,
     /**
      * IEEE OUI manufacturer resolved offline from the MAC prefix (Phase 3).
-     * Frequently "Unknown Vendor" for BLE: privacy-randomized advertiser MACs
-     * carry a locally-administered prefix that is not in the public registry.
+     * Frequently "Randomized (private)" for BLE: most advertisers use a
+     * locally-administered (RPA) address, which the resolver flags explicitly
+     * rather than attributing to a manufacturer.
      */
     val vendorName: String? = null,
 )
