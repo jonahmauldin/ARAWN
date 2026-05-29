@@ -78,8 +78,9 @@ class WirelessScannerService : Service() {
     private val binder = LocalBinder()
 
     private val _packets = MutableSharedFlow<ScanPacket>(
-        replay = 0,
+        replay = 1, // late UI collectors (post-bind) get the most recent packet
         extraBufferCapacity = 64, // never suspend the sensor callbacks
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     /** Cold-ish hot stream of fused scan packets. */
     val packets: SharedFlow<ScanPacket> = _packets.asSharedFlow()

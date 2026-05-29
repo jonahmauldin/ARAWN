@@ -168,12 +168,17 @@ class MainActivity : ComponentActivity() {
 
     private fun doBind() {
         if (bindRequested) return
-        bindService(
+        // BIND_AUTO_CREATE so the connection reliably establishes even before the
+        // service is started — a plain flag-0 bind to a not-yet-running service
+        // silently fails, leaving the UI unable to ever receive packets. When a
+        // session is live the service is also started (foreground), so unbinding
+        // on stop won't tear it down mid-run.
+        val bound = bindService(
             Intent(this, WirelessScannerService::class.java),
             connection,
-            0, // bind-only; do not auto-create the service
+            android.content.Context.BIND_AUTO_CREATE,
         )
-        bindRequested = true
+        bindRequested = bound
     }
 
     private fun doUnbind() {
