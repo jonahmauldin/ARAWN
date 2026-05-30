@@ -19,7 +19,7 @@ import androidx.room.RoomDatabase
         WifiApEntity::class,
         BleDeviceEntity::class,
     ],
-    version = 2, // v2 (Phase 3): + vendorName on wifi_access_points & ble_devices
+    version = 3, // v3 (Phase 2): + classification columns on wifi_access_points & ble_devices
     exportSchema = false, // flip to true + set room.schemaLocation once migrations begin
 )
 abstract class ArawnDatabase : RoomDatabase() {

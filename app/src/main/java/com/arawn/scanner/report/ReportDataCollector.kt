@@ -2,6 +2,7 @@ package com.arawn.scanner.report
 
 import android.content.Context
 import android.os.Build
+import com.arawn.scanner.classify.DeviceClass
 import com.arawn.scanner.db.WirelessDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,12 +21,14 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
             var ssid: String, var bssid: String,
             var bestRssi: Int, var frequencyMhz: Int,
             var capabilities: String, var vendor: String,
+            var deviceClass: String, var classConfidence: Int, var classStatus: String,
             var lat: Double, var lon: Double,
             var firstMs: Long, var lastMs: Long, var count: Int,
         )
         data class BleAgg(
             var name: String?, var mac: String,
             var bestRssi: Int, var vendor: String,
+            var deviceClass: String, var classConfidence: Int, var classStatus: String,
             var lat: Double, var lon: Double,
             var firstMs: Long, var lastMs: Long, var count: Int,
         )
@@ -46,6 +49,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                     wifiAggs[w.bssid] = WifiAgg(
                         w.ssid, w.bssid, w.rssiDbm, w.frequencyMhz,
                         w.capabilities, w.vendorName ?: "Unknown",
+                        w.deviceClass ?: "UNKNOWN", w.classConfidence ?: 0, w.classStatus ?: "UNKNOWN",
                         lat, lon, ts, ts, 1,
                     )
                 } else {
@@ -53,6 +57,12 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                         agg.bestRssi = w.rssiDbm; agg.lat = lat; agg.lon = lon
                         if (!w.vendorName.isNullOrBlank() && w.vendorName != "Unknown Vendor")
                             agg.vendor = w.vendorName
+                    }
+                    // Keep the most confident classification seen across sightings.
+                    if ((w.classConfidence ?: 0) > agg.classConfidence) {
+                        agg.deviceClass = w.deviceClass ?: agg.deviceClass
+                        agg.classConfidence = w.classConfidence ?: agg.classConfidence
+                        agg.classStatus = w.classStatus ?: agg.classStatus
                     }
                     if (ts < agg.firstMs) agg.firstMs = ts
                     if (ts > agg.lastMs)  agg.lastMs  = ts
@@ -66,11 +76,17 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                     bleAggs[b.macAddress] = BleAgg(
                         b.name, b.macAddress, b.rssiDbm,
                         b.vendorName ?: "Unknown",
+                        b.deviceClass ?: "UNKNOWN", b.classConfidence ?: 0, b.classStatus ?: "UNKNOWN",
                         lat, lon, ts, ts, 1,
                     )
                 } else {
                     if (b.rssiDbm > agg.bestRssi) { agg.bestRssi = b.rssiDbm; agg.lat = lat; agg.lon = lon }
                     if (b.name != null && agg.name == null) agg.name = b.name
+                    if ((b.classConfidence ?: 0) > agg.classConfidence) {
+                        agg.deviceClass = b.deviceClass ?: agg.deviceClass
+                        agg.classConfidence = b.classConfidence ?: agg.classConfidence
+                        agg.classStatus = b.classStatus ?: agg.classStatus
+                    }
                     if (ts < agg.firstMs) agg.firstMs = ts
                     if (ts > agg.lastMs)  agg.lastMs  = ts
                     agg.count++
@@ -94,6 +110,9 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                     capabilities = a.capabilities,
                     securityType = parseSecurity(a.capabilities),
                     vendor = a.vendor,
+                    deviceClass = classLabel(a.deviceClass),
+                    classConfidence = a.classConfidence,
+                    classStatus = a.classStatus,
                     lat = a.lat, lon = a.lon,
                     firstSeenMs = a.firstMs, lastSeenMs = a.lastMs, seenCount = a.count,
                 )
@@ -102,6 +121,9 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                 BleEntry(
                     name = a.name ?: "(unnamed)", mac = a.mac,
                     bestRssi = a.bestRssi, vendor = a.vendor,
+                    deviceClass = classLabel(a.deviceClass),
+                    classConfidence = a.classConfidence,
+                    classStatus = a.classStatus,
                     lat = a.lat, lon = a.lon,
                     firstSeenMs = a.firstMs, lastSeenMs = a.lastMs, seenCount = a.count,
                 )
@@ -132,6 +154,10 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
         in 5900..7200 -> "6 GHz"
         else -> "Other"
     }
+
+    /** Stored enum name → human label ("SMART_BULB" → "Smart Bulb"). */
+    private fun classLabel(name: String): String =
+        runCatching { DeviceClass.valueOf(name).label }.getOrDefault("Unknown")
 
     private fun parseSecurity(cap: String) = when {
         "WPA3" in cap -> "WPA3"

@@ -120,6 +120,9 @@ class EnrichedCsvExporter(context: Context) {
                     name = ap.ssid,
                     vendor = vendorOf(ap.vendorName, ap.bssid),
                     scope = scopeLabel(ap.bssid),
+                    deviceClass = ap.deviceClass ?: "",
+                    confidence = ap.classConfidence?.toString() ?: "",
+                    classStatus = ap.classStatus ?: "",
                     rssi = ap.rssiDbm,
                     freqMhz = ap.frequencyMhz.toString(),
                     channel = freqToChannel(ap.frequencyMhz)?.toString() ?: "",
@@ -140,6 +143,9 @@ class EnrichedCsvExporter(context: Context) {
                     name = dev.name ?: "",
                     vendor = vendorOf(dev.vendorName, dev.macAddress),
                     scope = scopeLabel(dev.macAddress),
+                    deviceClass = dev.deviceClass ?: "",
+                    confidence = dev.classConfidence?.toString() ?: "",
+                    classStatus = dev.classStatus ?: "",
                     rssi = dev.rssiDbm,
                     freqMhz = "",          // BLE channel/freq not surfaced by the scan API
                     channel = "",
@@ -180,6 +186,7 @@ class EnrichedCsvExporter(context: Context) {
 
     private fun row(
         type: String, mac: String, name: String, vendor: String, scope: String,
+        deviceClass: String, confidence: String, classStatus: String,
         rssi: Int, freqMhz: String, channel: String, band: String, security: String,
         txPower: String, firstSeen: String, lat: String, lon: String, alt: String,
         acc: String, spd: String,
@@ -189,6 +196,9 @@ class EnrichedCsvExporter(context: Context) {
         append(csv(name)); append(',')
         append(csv(vendor)); append(',')
         append(scope); append(',')
+        append(deviceClass); append(',')
+        append(confidence); append(',')
+        append(classStatus); append(',')
         append(rssi); append(',')
         append(freqMhz); append(',')
         append(channel); append(',')
@@ -227,7 +237,8 @@ class EnrichedCsvExporter(context: Context) {
 
     private companion object {
         const val COLUMN_HEADER =
-            "Type,MAC,Name,Vendor,MacScope,RSSI,FreqMHz,Channel,Band,Security,TxPower," +
+            "Type,MAC,Name,Vendor,MacScope,DeviceClass,Confidence,ClassStatus," +
+                "RSSI,FreqMHz,Channel,Band,Security,TxPower," +
                 "FirstSeen,Latitude,Longitude,Altitude,Accuracy,SpeedMps"
 
         val TIME_FMT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)

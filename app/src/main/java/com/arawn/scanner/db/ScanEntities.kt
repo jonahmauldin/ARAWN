@@ -84,6 +84,15 @@ data class WifiApEntity(
      * Vendor" when the prefix is genuinely absent from the local registry.
      */
     val vendorName: String? = null,
+    // ---- Phase 2 heuristic classification (stamped at write time) ----------
+    /** Top [com.arawn.scanner.classify.DeviceClass] name, e.g. "ROUTER_AP". */
+    val deviceClass: String? = null,
+    /** Confidence 0..100 for [deviceClass]. */
+    val classConfidence: Int? = null,
+    /** [com.arawn.scanner.classify.ClassificationStatus] name. */
+    val classStatus: String? = null,
+    /** Full per-class score breakdown ("ROUTER_AP:82;..."), for audit. */
+    val classBreakdown: String? = null,
 )
 
 @Entity(
@@ -113,6 +122,15 @@ data class BleDeviceEntity(
      * rather than attributing to a manufacturer.
      */
     val vendorName: String? = null,
+    // ---- Phase 2 heuristic classification (stamped at write time) ----------
+    /** Top [com.arawn.scanner.classify.DeviceClass] name, e.g. "SMART_BULB". */
+    val deviceClass: String? = null,
+    /** Confidence 0..100 for [deviceClass]. */
+    val classConfidence: Int? = null,
+    /** [com.arawn.scanner.classify.ClassificationStatus] name. */
+    val classStatus: String? = null,
+    /** Full per-class score breakdown ("SMART_BULB:53;...") for audit. */
+    val classBreakdown: String? = null,
 )
 
 // ---------------------------------------------------------------------------

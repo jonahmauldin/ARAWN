@@ -19,8 +19,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 6
-        versionName = "0.3.0-phase1"
+        versionCode = 7
+        versionName = "0.4.0-phase2"
     }
 
     buildTypes {

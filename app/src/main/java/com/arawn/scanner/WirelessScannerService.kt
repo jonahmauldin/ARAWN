@@ -181,12 +181,31 @@ class WirelessScannerService : Service() {
     private fun recordBle(result: ScanResult) {
         val device = result.device ?: return
         val mac = device.address ?: return
-        val name = result.scanRecord?.deviceName
+        val scanRecord = result.scanRecord
+        val name = scanRecord?.deviceName
         val tx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             result.txPower.takeIf { it != ScanResult.TX_POWER_NOT_PRESENT }
         } else null
+
+        // Passive advertisement metadata for the classifier. Service UUIDs are
+        // stored as lowercased full strings so fragment matches ("feaa", "180d")
+        // work; manufacturer data yields only the company IDs, never the payload.
+        val serviceUuids = scanRecord?.serviceUuids?.map { it.toString().lowercase() } ?: emptyList()
+        val manufacturerIds = ArrayList<Int>(2)
+        val msd = scanRecord?.manufacturerSpecificData
+        if (msd != null) {
+            for (idx in 0 until msd.size()) manufacturerIds.add(msd.keyAt(idx))
+        }
+
         bleSeen[mac] = TimedBle(
-            obs = BleObservation(mac, name, result.rssi, tx),
+            obs = BleObservation(
+                macAddress = mac,
+                name = name,
+                rssiDbm = result.rssi,
+                txPower = tx,
+                serviceUuids = serviceUuids,
+                manufacturerIds = manufacturerIds,
+            ),
             seenElapsedMs = android.os.SystemClock.elapsedRealtime(),
         )
     }

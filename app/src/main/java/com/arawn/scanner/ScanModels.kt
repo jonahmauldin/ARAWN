@@ -42,6 +42,17 @@ data class BleObservation(
     val txPower: Int?,
     /** Offline OUI vendor for the MAC prefix; null until stamped (Phase 3). */
     val vendorName: String? = null,
+    /**
+     * Advertised GATT service UUIDs, lowercased full form (Phase 2). Empty when
+     * the advertisement carried none. Feeds the classifier's UUID rules
+     * (Eddystone, fitness services, lighting profiles).
+     */
+    val serviceUuids: List<String> = emptyList(),
+    /**
+     * Company identifiers from the advertisement's manufacturer-specific data
+     * (Phase 2). Passive metadata only — the payload bytes are not decoded here.
+     */
+    val manufacturerIds: List<Int> = emptyList(),
 )
 
 /**

@@ -68,6 +68,7 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
 <div class="chart-card"><div class="chart-title">Frequency Bands</div><canvas id="chart-bands"></canvas></div>
 <div class="chart-card"><div class="chart-title">Signal Strength Distribution</div><canvas id="chart-rssi"></canvas></div>
 <div class="chart-card"><div class="chart-title">Top Vendors (Wi-Fi)</div><canvas id="chart-vendors"></canvas></div>
+<div class="chart-card"><div class="chart-title">Device Types</div><canvas id="chart-classes"></canvas></div>
 <div class="chart-card"><div class="chart-title">Wi-Fi Discovery Over Time</div><canvas id="chart-timeline"></canvas></div>
 </div>""")
 
@@ -119,6 +120,7 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
             append("{\"ssid\":${js(w.ssid)},\"bssid\":${js(w.bssid)},\"rssi\":${w.bestRssi},")
             append("\"freq\":${w.frequencyMhz},\"channel\":${w.channel},\"band\":${js(w.band)},")
             append("\"security\":${js(w.securityType)},\"vendor\":${js(w.vendor)},")
+            append("\"cls\":${js(w.deviceClass)},\"conf\":${w.classConfidence},\"cstat\":${js(w.classStatus)},")
             append("\"lat\":${c(w.lat)},\"lon\":${c(w.lon)},")
             append("\"firstSeen\":${w.firstSeenMs},\"lastSeen\":${w.lastSeenMs},\"seenCount\":${w.seenCount}}")
         }
@@ -126,7 +128,9 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
         data.ble.forEachIndexed { i, b ->
             if (i > 0) append(',')
             append("{\"name\":${js(b.name)},\"mac\":${js(b.mac)},\"rssi\":${b.bestRssi},")
-            append("\"vendor\":${js(b.vendor)},\"lat\":${c(b.lat)},\"lon\":${c(b.lon)},")
+            append("\"vendor\":${js(b.vendor)},")
+            append("\"cls\":${js(b.deviceClass)},\"conf\":${b.classConfidence},\"cstat\":${js(b.classStatus)},")
+            append("\"lat\":${c(b.lat)},\"lon\":${c(b.lon)},")
             append("\"firstSeen\":${b.firstSeenMs},\"lastSeen\":${b.lastSeenMs},\"seenCount\":${b.seenCount}}")
         }
         append("],\"track\":[")
@@ -354,6 +358,9 @@ function buildAnalysis(){
   var cong=Object.entries(chC).filter(function(e){return e[1]>3;});
   var vC={};wifi.forEach(function(w){if(w.vendor&&w.vendor!=='Unknown'&&w.vendor!=='Unknown Vendor')vC[w.vendor]=(vC[w.vendor]||0)+1;});
   var topV=Object.entries(vC).sort(function(a,b){return b[1]-a[1];})[0];
+  var allD=[].concat(wifi,ble);
+  var classified=allD.filter(function(d){return d.cls&&d.cls!=='Unknown';});
+  var clsTypes={};classified.forEach(function(d){clsTypes[d.cls]=1;});
   var items=[
     {l:'Open Networks',v:open.length,c:open.length>0?'warn':'good'},
     {l:'WPA3 Networks',v:wpa3.length,c:wpa3.length>0?'good':''},
@@ -361,6 +368,7 @@ function buildAnalysis(){
     {l:'Duplicate SSIDs',v:dups.length,c:''},
     {l:'Congested Channels',v:cong.length,c:cong.length>2?'warn':''},
     {l:'Top Vendor',v:topV?topV[0].slice(0,20)+' ('+topV[1]+')':'N/A',c:''},
+    {l:'Devices Classified',v:classified.length+' / '+allD.length+' ('+Object.keys(clsTypes).length+' types)',c:classified.length>0?'good':''},
     {l:'Most Common SSID',v:dups[0]?'"'+dups[0][0].slice(0,18)+'" x'+dups[0][1]:'N/A',c:''},
     {l:'BLE Unnamed',v:ble.filter(function(b){return b.name==='(unnamed)';}).length,c:''},
   ];
@@ -388,6 +396,13 @@ function buildCharts(){
   var vK=Object.keys(vM).sort(function(a,b){return vM[b]-vM[a];}).slice(0,8);
   drawBarH('chart-vendors',vK,vK.map(function(k){return vM[k];}), '#4fc3f7');
 
+  // Device types across BOTH radios; unclassified rows are excluded so the
+  // chart shows only positively-identified categories.
+  var clsM={};[].concat(REPORT_DATA.wifi,REPORT_DATA.ble).forEach(function(d){
+    if(d.cls&&d.cls!=='Unknown')clsM[d.cls]=(clsM[d.cls]||0)+1;});
+  var clsK=Object.keys(clsM).sort(function(a,b){return clsM[b]-clsM[a];});
+  drawBarH('chart-classes',clsK,clsK.map(function(k){return clsM[k];}), '#35d07f');
+
   if(wifi.length>1){
     var sorted=wifi.slice().sort(function(a,b){return a.firstSeen-b.firstSeen;});
     var t0=sorted[0].firstSeen,t1=sorted[sorted.length-1].firstSeen,step=Math.max((t1-t0)/10,60000);
@@ -403,14 +418,20 @@ function buildCharts(){
 // ── Tables
 function buildTables(){
   var rssiCell=function(v){return '<span class="rssi-bar" style="width:'+rssiW(v)+'px;background:'+rssiColor(v)+'"></span>'+v+' dBm';};
+  // "Smart Bulb · 87%" with a dim qualifier for ambiguous/low-confidence calls.
+  var classOf=function(d){
+    if(!d.cls||d.cls==='Unknown')return '<span style="color:#666">—</span>';
+    var q=(d.cstat==='AMBIGUOUS'||d.cstat==='LOW_CONFIDENCE')?' <span style="color:#e0b341">?</span>':'';
+    return d.cls+' <span style="color:#888">'+d.conf+'%</span>'+q;
+  };
 
   new DataTable('wifi-tbl',
-    REPORT_DATA.wifi.map(function(w){return[w.ssid||'(hidden)',w.bssid,w.rssi,w.freq,w.channel,w.band,w.security,w.vendor,coord(w.lat,w.lon),fmt(w.firstSeen),fmt(w.lastSeen),w.seenCount];}),
-    [{label:'SSID'},{label:'BSSID'},{label:'RSSI',r:rssiCell},{label:'MHz'},{label:'Ch'},{label:'Band'},{label:'Security',r:secBadge},{label:'Vendor'},{label:'Coordinates'},{label:'First Seen'},{label:'Last Seen'},{label:'Seen x'}]);
+    REPORT_DATA.wifi.map(function(w){return[w.ssid||'(hidden)',w.bssid,w.rssi,w.freq,w.channel,w.band,w.security,w.vendor,classOf(w),coord(w.lat,w.lon),fmt(w.firstSeen),fmt(w.lastSeen),w.seenCount];}),
+    [{label:'SSID'},{label:'BSSID'},{label:'RSSI',r:rssiCell},{label:'MHz'},{label:'Ch'},{label:'Band'},{label:'Security',r:secBadge},{label:'Vendor'},{label:'Class'},{label:'Coordinates'},{label:'First Seen'},{label:'Last Seen'},{label:'Seen x'}]);
 
   new DataTable('ble-tbl',
-    REPORT_DATA.ble.map(function(b){return[b.name,b.mac,b.rssi,b.vendor,coord(b.lat,b.lon),fmt(b.firstSeen),fmt(b.lastSeen),b.seenCount];}),
-    [{label:'Name'},{label:'MAC'},{label:'RSSI',r:rssiCell},{label:'Vendor'},{label:'Coordinates'},{label:'First Seen'},{label:'Last Seen'},{label:'Seen x'}]);
+    REPORT_DATA.ble.map(function(b){return[b.name,b.mac,b.rssi,b.vendor,classOf(b),coord(b.lat,b.lon),fmt(b.firstSeen),fmt(b.lastSeen),b.seenCount];}),
+    [{label:'Name'},{label:'MAC'},{label:'RSSI',r:rssiCell},{label:'Vendor'},{label:'Class'},{label:'Coordinates'},{label:'First Seen'},{label:'Last Seen'},{label:'Seen x'}]);
 }
 
 // ── Map
