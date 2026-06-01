@@ -14,6 +14,14 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A1: stable signing credentials. Surfaced as job-level env so the build step
+    # (and the conditional decode step) can read them. When the secrets are not
+    # configured these are empty strings and the build falls back to debug signing.
+    env:
+      ARAWN_KEYSTORE_BASE64: ${{ secrets.ARAWN_KEYSTORE_BASE64 }}
+      ARAWN_KEYSTORE_PASSWORD: ${{ secrets.ARAWN_KEYSTORE_PASSWORD }}
+      ARAWN_KEY_ALIAS: ${{ secrets.ARAWN_KEY_ALIAS }}
+      ARAWN_KEY_PASSWORD: ${{ secrets.ARAWN_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +42,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+
+      # A1: decode the base64 keystore secret to a file and expose its path.
+      # Skipped automatically when the secret is absent (debug-signing fallback).
+      - name: Decode signing keystore
+        if: ${{ env.ARAWN_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "$ARAWN_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/arawn-stable.jks"
+          echo "ARAWN_KEYSTORE_PATH=$RUNNER_TEMP/arawn-stable.jks" >> "$GITHUB_ENV"
+
+      - name: Report signing mode
+        run: |
+          if [ -n "$ARAWN_KEYSTORE_PATH" ]; then
+            echo "Signing with STABLE key: $ARAWN_KEYSTORE_PATH"
+          else
+            echo "No stable keystore configured — falling back to per-build DEBUG signing."
+          fi
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon

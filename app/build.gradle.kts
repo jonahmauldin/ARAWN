@@ -11,6 +11,24 @@ plugins {
     id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
 }
 
+// --- Phase A / A1: stable signing -------------------------------------------
+// Credentials come from environment variables (CI secrets) or, for local builds,
+// Gradle properties (e.g. ~/.gradle/gradle.properties). When NONE are present
+// (fresh clone, fork, or a CI run before the secrets exist) the build falls back
+// to the auto-generated per-build debug keystore, so it still compiles + runs —
+// it simply won't be installable in-place over a stable-signed build.
+val stableStorePath: String? =
+    System.getenv("ARAWN_KEYSTORE_PATH") ?: (project.findProperty("ARAWN_KEYSTORE_PATH") as String?)
+val stableStorePassword: String? =
+    System.getenv("ARAWN_KEYSTORE_PASSWORD") ?: (project.findProperty("ARAWN_KEYSTORE_PASSWORD") as String?)
+val stableKeyAlias: String? =
+    System.getenv("ARAWN_KEY_ALIAS") ?: (project.findProperty("ARAWN_KEY_ALIAS") as String?)
+val stableKeyPassword: String? =
+    System.getenv("ARAWN_KEY_PASSWORD") ?: (project.findProperty("ARAWN_KEY_PASSWORD") as String?)
+val hasStableSigning: Boolean =
+    stableStorePath != null && file(stableStorePath).exists() &&
+        stableStorePassword != null && stableKeyAlias != null && stableKeyPassword != null
+
 android {
     namespace = "com.arawn.scanner"
     compileSdk = 35
@@ -19,13 +37,33 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 7
-        versionName = "0.4.0-phase2"
+        versionCode = 8
+        versionName = "0.5.0-phaseA-a1"
+    }
+
+    signingConfigs {
+        // Only declared when real credentials are available; otherwise the build
+        // types below keep their default signing (debug keystore).
+        if (hasStableSigning) {
+            create("stable") {
+                storeFile = file(stableStorePath!!)
+                storePassword = stableStorePassword
+                keyAlias = stableKeyAlias
+                keyPassword = stableKeyPassword
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            // A1: CI builds the debug variant. Sign it with the stable key (when
+            // present) so each new build installs in-place — no signature-mismatch
+            // uninstall, no Room DB wipe. Runtime behavior is otherwise unchanged.
+            if (hasStableSigning) signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = false
+            if (hasStableSigning) signingConfig = signingConfigs.getByName("stable")
         }
     }
 
