@@ -37,8 +37,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 9
-        versionName = "0.5.0-phaseA-a2"
+        versionCode = 10
+        versionName = "0.5.0-phaseA-a3"
     }
 
     signingConfigs {
@@ -96,6 +96,9 @@ secrets {
 }
 
 dependencies {
+    // Shared infrastructure module (Phase A / A3): hosts the offline OUI engine.
+    implementation(project(":core"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     // lifecycleScope for Activity-scoped coroutines (CSV export). Apache-2.0.

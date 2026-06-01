@@ -1,6 +1,6 @@
 package com.arawn.scanner
 
-import com.arawn.scanner.oui.OuiLookupManager.UNKNOWN_VENDOR
+import com.arawn.core.oui.OuiLookupManager.UNKNOWN_VENDOR
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

@@ -2,7 +2,7 @@ package com.arawn.scanner.classify
 
 import com.arawn.scanner.BleObservation
 import com.arawn.scanner.WifiObservation
-import com.arawn.scanner.oui.OuiLookupManager
+import com.arawn.core.oui.OuiLookupManager
 
 /**
  * Adapts ARAWN's transport/UI observation models into the engine's neutral

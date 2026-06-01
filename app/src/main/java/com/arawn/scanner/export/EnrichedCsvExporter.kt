@@ -7,8 +7,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import com.arawn.scanner.db.ArawnDatabase
 import com.arawn.scanner.db.LogEntryWithSignals
-import com.arawn.scanner.oui.OuiLookupManager
-import com.arawn.scanner.oui.OuiLookupManager.MacKind
+import com.arawn.core.oui.OuiLookupManager
+import com.arawn.core.oui.OuiLookupManager.MacKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.Writer

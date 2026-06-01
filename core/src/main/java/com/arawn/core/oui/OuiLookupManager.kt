@@ -1,4 +1,4 @@
-package com.arawn.scanner.oui
+package com.arawn.core.oui
 
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope

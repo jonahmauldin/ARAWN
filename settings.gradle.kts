@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "ARAWN"
 include(":app")
+include(":core")

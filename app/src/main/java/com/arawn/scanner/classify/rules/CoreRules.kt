@@ -4,7 +4,7 @@ import com.arawn.scanner.classify.ClassificationRule
 import com.arawn.scanner.classify.ClassifierInput
 import com.arawn.scanner.classify.DeviceClass
 import com.arawn.scanner.classify.Transport
-import com.arawn.scanner.oui.OuiLookupManager
+import com.arawn.core.oui.OuiLookupManager
 
 /**
  * The default rule library.

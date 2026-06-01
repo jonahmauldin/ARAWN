@@ -1,6 +1,6 @@
 package com.arawn.scanner.classify
 
-import com.arawn.scanner.oui.OuiLookupManager
+import com.arawn.core.oui.OuiLookupManager
 
 /**
  * Phase 2 — device classification value types.
