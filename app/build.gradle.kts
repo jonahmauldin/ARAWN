@@ -2,13 +2,13 @@
 // Adjust namespace / SDK pins to your installed tooling as needed.
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose") // Kotlin 2.0+ Compose compiler
-    id("com.google.devtools.ksp")             // Room annotation processing
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)  // Kotlin 2.0+ Compose compiler
+    alias(libs.plugins.ksp)             // Room annotation processing
     // Free / Apache-2.0. Used here to keep the (future, free) WiGLE API token
     // out of the public source — NOT for any paid Google Maps key.
-    id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
+    alias(libs.plugins.secrets.gradle)
 }
 
 // --- Phase A / A1: stable signing -------------------------------------------
@@ -37,8 +37,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 8
-        versionName = "0.5.0-phaseA-a1"
+        versionCode = 9
+        versionName = "0.5.0-phaseA-a2"
     }
 
     signingConfigs {
@@ -96,28 +96,27 @@ secrets {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
     // lifecycleScope for Activity-scoped coroutines (CSV export). Apache-2.0.
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation(libs.kotlinx.coroutines.android)
 
     // Room — local SQLite persistence (all open-source, no cloud).
-    val roomVersion = "2.6.1"
-    implementation("androidx.room:room-runtime:$roomVersion")
-    implementation("androidx.room:room-ktx:$roomVersion") // suspend + Flow support
-    ksp("androidx.room:room-compiler:$roomVersion")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx) // suspend + Flow support
+    ksp(libs.androidx.room.compiler)
 
     // osmdroid — Apache-2.0 OpenStreetMap view. No API key, no cloud account.
     // Used strictly offline here (setUseDataConnection(false)); the map reads
     // only from local tile archives on disk, so no INTERNET permission is added.
-    implementation("org.osmdroid:osmdroid-android:6.1.20")
+    implementation(libs.osmdroid.android)
 }
