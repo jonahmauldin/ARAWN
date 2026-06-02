@@ -1,4 +1,4 @@
-package com.arawn.scanner.db
+package com.arawn.core.database
 
 import androidx.room.Embedded
 import androidx.room.Entity

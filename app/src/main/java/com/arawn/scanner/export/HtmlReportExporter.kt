@@ -4,7 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
-import com.arawn.scanner.db.ArawnDatabase
+import com.arawn.core.database.ArawnDatabase
 import com.arawn.scanner.report.HtmlReportRenderer
 import com.arawn.scanner.report.ReportDataCollector
 import kotlinx.coroutines.Dispatchers

@@ -49,8 +49,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import android.widget.Toast
-import com.arawn.scanner.db.ArawnDatabase
-import com.arawn.scanner.db.CoordinatePair
+import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.CoordinatePair
 import com.arawn.scanner.export.DataLogBackupExporter
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter

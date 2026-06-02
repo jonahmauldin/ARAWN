@@ -37,8 +37,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 10
-        versionName = "0.5.0-phaseA-a3"
+        versionCode = 11
+        versionName = "0.5.0-phaseA-a4"
     }
 
     signingConfigs {

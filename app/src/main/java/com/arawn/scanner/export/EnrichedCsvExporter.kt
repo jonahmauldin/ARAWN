@@ -5,8 +5,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
-import com.arawn.scanner.db.ArawnDatabase
-import com.arawn.scanner.db.LogEntryWithSignals
+import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.LogEntryWithSignals
 import com.arawn.core.oui.OuiLookupManager
 import com.arawn.core.oui.OuiLookupManager.MacKind
 import kotlinx.coroutines.Dispatchers

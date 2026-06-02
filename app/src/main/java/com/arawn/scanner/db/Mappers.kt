@@ -1,5 +1,8 @@
 package com.arawn.scanner.db
 
+import com.arawn.core.database.BleDeviceEntity
+import com.arawn.core.database.LogEntryEntity
+import com.arawn.core.database.WifiApEntity
 import com.arawn.scanner.ScanPacket
 import com.arawn.scanner.classify.ClassifierInputMapper
 import com.arawn.scanner.classify.DeviceClassifier

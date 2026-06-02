@@ -29,9 +29,9 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
-import com.arawn.scanner.db.ArawnDatabase
-import com.arawn.scanner.db.SessionEntity
-import com.arawn.scanner.db.WirelessDao
+import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.SessionEntity
+import com.arawn.core.database.WirelessDao
 import com.arawn.core.oui.OuiLookupManager
 import com.arawn.scanner.db.toBleEntities
 import com.arawn.scanner.db.toLogEntry

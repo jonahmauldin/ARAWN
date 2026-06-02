@@ -6,6 +6,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.ksp) // Room annotation processing (the DB layer lives here now)
 }
 
 android {
@@ -28,4 +29,11 @@ android {
 
 dependencies {
     implementation(libs.kotlinx.coroutines.android)
+
+    // Room — local SQLite persistence (all open-source, no cloud). Exposed via
+    // `api` so consumer modules (:app, future :recon) see the entities/DAO/Flow
+    // types without re-declaring Room themselves.
+    api(libs.androidx.room.runtime)
+    api(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 }

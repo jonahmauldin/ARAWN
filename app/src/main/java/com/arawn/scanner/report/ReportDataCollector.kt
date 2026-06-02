@@ -3,7 +3,7 @@ package com.arawn.scanner.report
 import android.content.Context
 import android.os.Build
 import com.arawn.scanner.classify.DeviceClass
-import com.arawn.scanner.db.WirelessDao
+import com.arawn.core.database.WirelessDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

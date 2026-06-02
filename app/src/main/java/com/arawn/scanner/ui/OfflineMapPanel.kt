@@ -16,7 +16,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.createBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.arawn.scanner.db.CoordinatePair
+import com.arawn.core.database.CoordinatePair
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint

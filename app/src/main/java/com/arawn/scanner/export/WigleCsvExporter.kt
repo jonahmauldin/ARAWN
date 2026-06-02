@@ -5,9 +5,9 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
-import com.arawn.scanner.db.ArawnDatabase
-import com.arawn.scanner.db.LogEntryEntity
-import com.arawn.scanner.db.LogEntryWithSignals
+import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.LogEntryEntity
+import com.arawn.core.database.LogEntryWithSignals
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.Writer

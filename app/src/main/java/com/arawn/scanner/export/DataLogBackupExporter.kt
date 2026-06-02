@@ -4,9 +4,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
-import com.arawn.scanner.db.ArawnDatabase
-import com.arawn.scanner.db.LogEntryWithSignals
-import com.arawn.scanner.db.WirelessDao
+import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.LogEntryWithSignals
+import com.arawn.core.database.WirelessDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
