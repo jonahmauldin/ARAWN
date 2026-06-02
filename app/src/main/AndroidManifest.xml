@@ -87,15 +87,6 @@
             </intent-filter>
         </activity>
 
-        <!-- The foregroundServiceType MUST list every type the service can
-             promote itself to. We combine 'location' (GPS) and
-             'connectedDevice' (BLE scanning per the spec). -->
-        <service
-            android:name=".WirelessScannerService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="location|connectedDevice" />
-
     </application>
 
 </manifest>

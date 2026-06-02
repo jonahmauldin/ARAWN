@@ -452,7 +452,7 @@ class WirelessScannerService : Service() {
         val openIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            Intent().setClassName(packageName, "com.arawn.scanner.MainActivity"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 

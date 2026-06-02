@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        :recon module manifest — merged into :app by AGP.
+
+        Only component declarations belong here. All <uses-permission> tags live
+        in :app's manifest because permissions are granted to the APPLICATION,
+        not to a library module.
+
+        Full class name required (not the .Relative shorthand) because this
+        module's namespace is com.arawn.recon, not com.arawn.scanner.
+    -->
+    <application>
+        <service
+            android:name="com.arawn.scanner.WirelessScannerService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location|connectedDevice" />
+    </application>
+
+</manifest>

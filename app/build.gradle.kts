@@ -5,7 +5,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)  // Kotlin 2.0+ Compose compiler
-    alias(libs.plugins.ksp)             // Room annotation processing
     // Free / Apache-2.0. Used here to keep the (future, free) WiGLE API token
     // out of the public source — NOT for any paid Google Maps key.
     alias(libs.plugins.secrets.gradle)
@@ -37,8 +36,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 11
-        versionName = "0.5.0-phaseA-a4"
+        versionCode = 12
+        versionName = "0.5.0-phaseA-a5"
     }
 
     signingConfigs {
@@ -96,12 +95,15 @@ secrets {
 }
 
 dependencies {
-    // Shared infrastructure module (Phase A / A3): hosts the offline OUI engine.
+    // :recon owns the scanner, models, classify, exporters, report, and recon UI.
+    // :core owns Room DB, OUI engine; its api() deps (Room runtime/ktx) are
+    // visible here transitively so no explicit Room dep is needed in :app.
+    implementation(project(":recon"))
     implementation(project(":core"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
-    // lifecycleScope for Activity-scoped coroutines (CSV export). Apache-2.0.
+    // lifecycleScope for Activity-scoped coroutines (CSV export, HTML report).
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     val composeBom = platform(libs.androidx.compose.bom)
@@ -112,14 +114,4 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.kotlinx.coroutines.android)
-
-    // Room — local SQLite persistence (all open-source, no cloud).
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx) // suspend + Flow support
-    ksp(libs.androidx.room.compiler)
-
-    // osmdroid — Apache-2.0 OpenStreetMap view. No API key, no cloud account.
-    // Used strictly offline here (setUseDataConnection(false)); the map reads
-    // only from local tile archives on disk, so no INTERNET permission is added.
-    implementation(libs.osmdroid.android)
 }
