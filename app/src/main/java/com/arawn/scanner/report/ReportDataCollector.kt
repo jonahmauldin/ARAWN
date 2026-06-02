@@ -55,8 +55,10 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                 } else {
                     if (w.rssiDbm > agg.bestRssi) {
                         agg.bestRssi = w.rssiDbm; agg.lat = lat; agg.lon = lon
-                        if (!w.vendorName.isNullOrBlank() && w.vendorName != "Unknown Vendor")
-                            agg.vendor = w.vendorName
+                        // Local val: entity props live in :core now, so Kotlin won't
+                        // smart-cast w.vendorName across the module boundary.
+                        val vn = w.vendorName
+                        if (!vn.isNullOrBlank() && vn != "Unknown Vendor") agg.vendor = vn
                     }
                     // Keep the most confident classification seen across sightings.
                     if ((w.classConfidence ?: 0) > agg.classConfidence) {
