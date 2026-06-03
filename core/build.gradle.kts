@@ -52,5 +52,9 @@ dependencies {
 
     // SQLCipher — AES-256 whole-database encryption (Phase I / E.1).
     // Package stays net.sqlcipher.database despite the artifact rename at 4.5.5+.
-    implementation(libs.sqlcipher.android)
+    // @aar is required: without it Gradle may resolve the POM-only variant and
+    // the net.sqlcipher classes are absent from the compile classpath.
+    implementation("net.zetetic:sqlcipher-android:${libs.versions.sqlcipher.get()}@aar") {
+        exclude(group = "com.android.support", module = "support-v4")
+    }
 }
