@@ -184,7 +184,11 @@ class MainActivity : ComponentActivity() {
                                 onExport = { exportLatestSession() },
                                 onReport = { generateHtmlReport() },
                             )
-                            AppScreen.MISSIONS -> MissionsScreen()
+                            AppScreen.MISSIONS -> com.arawn.scanner.missions.MissionsScreen(
+                                missionDao  = container.missionDao,
+                                geoDao      = container.geoDao,
+                                wirelessDao = container.wirelessDao,
+                            )
                             AppScreen.REPORTS  -> ReportsScreen()
                             AppScreen.VAULT    -> VaultScreen()
                         }

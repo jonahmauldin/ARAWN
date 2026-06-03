@@ -13,9 +13,8 @@ import androidx.compose.ui.text.style.TextAlign
 
 // Stub screens — each becomes a real feature in later phases.
 
-@Composable fun MissionsScreen() = PlaceholderScreen("◎ MISSION PLANNER",   "Phase C")
-@Composable fun ReportsScreen()  = PlaceholderScreen("▤ REPORT GENERATOR",  "Phase D")
-@Composable fun VaultScreen()    = PlaceholderScreen("⊗ SECURE VAULT",      "Phase E")
+@Composable fun ReportsScreen() = PlaceholderScreen("▤ REPORT GENERATOR", "Phase D")
+@Composable fun VaultScreen()   = PlaceholderScreen("⊗ SECURE VAULT",      "Phase E")
 
 @Composable
 private fun PlaceholderScreen(title: String, phase: String) {
