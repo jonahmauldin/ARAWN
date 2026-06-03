@@ -86,6 +86,15 @@ interface GeoDao {
     @Query("SELECT * FROM waypoints WHERE missionId IS NULL")
     fun observeGlobalWaypoints(): Flow<List<WaypointEntity>>
 
+    /** All waypoints regardless of mission — used by the Ops map overlay. */
+    @Query("SELECT * FROM waypoints ORDER BY createdMs DESC")
+    fun observeAllWaypoints(): Flow<List<WaypointEntity>>
+
+    /** All routes with their points — used by the Ops map overlay. */
+    @Transaction
+    @Query("SELECT * FROM routes ORDER BY createdMs DESC")
+    fun observeAllRoutesWithPoints(): Flow<List<RouteWithPoints>>
+
     // ---- routes ----
     @Insert suspend fun insertRoute(r: RouteEntity): Long
     @Update suspend fun updateRoute(r: RouteEntity)

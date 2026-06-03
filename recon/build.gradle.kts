@@ -49,4 +49,6 @@ dependencies {
 
     // osmdroid — Apache-2.0 OpenStreetMap view. No API key required.
     implementation(libs.osmdroid.android)
+
+    testImplementation("junit:junit:4.13.2")
 }

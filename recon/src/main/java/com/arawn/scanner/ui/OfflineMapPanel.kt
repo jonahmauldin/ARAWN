@@ -65,7 +65,7 @@ fun OfflineMapPanel(
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             setMinZoomLevel(5.0)
-            setMaxZoomLevel(18.0)
+            setMaxZoomLevel(21.0)
             controller.setZoom(15.0)
         }
     }

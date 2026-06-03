@@ -1,6 +1,7 @@
 package com.arawn.scanner.knowledge
 
 import android.content.Context
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import com.arawn.core.database.DocumentDao
 import com.arawn.core.database.DocumentEntity
@@ -39,12 +40,23 @@ class KnowledgeRepository(
         tags: String?,
     ): DocumentEntity = withContext(Dispatchers.IO) {
         val originalName = vaultRepository.resolveDisplayName(uri)
+        // Count pages now (original URI is available unencrypted) rather than
+        // on every open — avoids decrypt just to get a page count.
+        val pageCount = if (context.contentResolver.getType(uri) == "application/pdf") {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    PdfRenderer(pfd).use { it.pageCount }
+                }
+            }.getOrNull()
+        } else null
+
         val entry = vaultRepository.addFile(uri, originalName, VaultEntryKind.DOCUMENT)
         val doc = DocumentEntity(
             title        = title.ifBlank { originalName },
             category     = category?.takeIf { it.isNotBlank() },
             tags         = tags?.takeIf { it.isNotBlank() },
             vaultEntryId = entry.vaultEntryId,
+            pageCount    = pageCount,
             addedMs      = System.currentTimeMillis(),
         )
         val docId = documentDao.insertDocument(doc)

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arawn.core.database.SessionEntity
 import com.arawn.core.database.WirelessDao
+import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,6 +83,7 @@ data class ReportFile(
 fun ReportsScreen(
     wirelessDao: WirelessDao,
     htmlReportExporter: HtmlReportExporter,
+    enrichedCsvExporter: EnrichedCsvExporter,
 ) {
     var activeTab by remember { mutableStateOf(ReportTab.GENERATE) }
     var historyKey by remember { mutableStateOf(0) }
@@ -132,12 +134,13 @@ fun ReportsScreen(
 
         when (activeTab) {
             ReportTab.GENERATE -> GenerateTab(
-                wirelessDao = wirelessDao,
-                htmlReportExporter = htmlReportExporter,
-                onReportGenerated = { historyKey++ },
+                wirelessDao          = wirelessDao,
+                htmlReportExporter   = htmlReportExporter,
+                enrichedCsvExporter  = enrichedCsvExporter,
+                onReportGenerated    = { historyKey++ },
             )
             ReportTab.HISTORY -> HistoryTab(
-                context = context,
+                context    = context,
                 historyKey = historyKey,
             )
         }
@@ -152,6 +155,7 @@ fun ReportsScreen(
 private fun GenerateTab(
     wirelessDao: WirelessDao,
     htmlReportExporter: HtmlReportExporter,
+    enrichedCsvExporter: EnrichedCsvExporter,
     onReportGenerated: () -> Unit,
 ) {
     val sessions = remember { mutableStateListOf<SessionEntity>() }
@@ -245,32 +249,66 @@ private fun GenerateTab(
             )
         }
 
-        Button(
-            onClick = {
-                scope.launch {
-                    generating = true
-                    resultMsg = null
-                    val result = htmlReportExporter.exportSessions(selectedIds.toList())
-                    resultMsg = result.message
-                    generating = false
-                    if (result.success) {
-                        selectedIds = emptySet()
-                        onReportGenerated()
-                    }
-                }
-            },
-            enabled = selectedIds.isNotEmpty() && !generating,
+        // Button row: HTML report + CSV export side by side
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = if (generating) "⊞ GENERATING…" else "⊞ GENERATE HTML REPORT",
-                fontFamily = FontFamily.Monospace,
-                color = Amber,
-                fontSize = 13.sp,
-            )
+            Button(
+                onClick = {
+                    scope.launch {
+                        generating = true
+                        resultMsg = null
+                        val result = htmlReportExporter.exportSessions(selectedIds.toList())
+                        resultMsg = result.message
+                        generating = false
+                        if (result.success) {
+                            selectedIds = emptySet()
+                            onReportGenerated()
+                        }
+                    }
+                },
+                enabled = selectedIds.isNotEmpty() && !generating,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+            ) {
+                Text(
+                    text = if (generating) "GENERATING…" else "⊞ HTML",
+                    fontFamily = FontFamily.Monospace,
+                    color = Amber,
+                    fontSize = 12.sp,
+                )
+            }
+            Button(
+                onClick = {
+                    scope.launch {
+                        generating = true
+                        resultMsg = null
+                        var ok = 0; var fail = 0
+                        selectedIds.forEach { id ->
+                            when (enrichedCsvExporter.export(id)) {
+                                is EnrichedCsvExporter.Result.Success -> ok++
+                                else -> fail++
+                            }
+                        }
+                        resultMsg = if (fail == 0) "CSV exported: $ok file(s)"
+                                    else "CSV: $ok ok, $fail failed"
+                        generating = false
+                    }
+                },
+                enabled = selectedIds.isNotEmpty() && !generating,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+            ) {
+                Text(
+                    text = if (generating) "EXPORTING…" else "⤓ CSV",
+                    fontFamily = FontFamily.Monospace,
+                    color = Amber,
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }

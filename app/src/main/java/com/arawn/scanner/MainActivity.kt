@@ -197,6 +197,7 @@ class MainActivity : AppCompatActivity() {
                         when (currentScreen) {
                             AppScreen.OPS      -> OpsScreen(
                                 wirelessDao  = container.wirelessDao,
+                                geoDao       = container.geoDao,
                                 livePosition = liveCoord,
                             )
                             AppScreen.RECON    -> ScannerScreen(
@@ -223,6 +224,7 @@ class MainActivity : AppCompatActivity() {
                             AppScreen.REPORTS  -> com.arawn.scanner.reports.ReportsScreen(
                                 wirelessDao          = container.wirelessDao,
                                 htmlReportExporter   = container.htmlReportExporter,
+                                enrichedCsvExporter  = container.enrichedCsvExporter,
                             )
                             AppScreen.VAULT    -> VaultScreen(
                                 isUnlocked      = isVaultUnlocked,

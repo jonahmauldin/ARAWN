@@ -505,7 +505,7 @@ private fun DocumentViewer(
                     fontSize   = 12.sp,
                 )
             }
-            isPdf -> PdfPageViewer(file = file, modifier = Modifier.weight(1f))
+            isPdf -> PdfPageViewer(file = file, knownPageCount = doc.pageCount, modifier = Modifier.weight(1f))
             else  -> TextFileViewer(file = file, modifier = Modifier.weight(1f))
         }
     }
@@ -552,7 +552,7 @@ private fun DocumentViewer(
 // =============================================================================
 
 @Composable
-private fun PdfPageViewer(file: File, modifier: Modifier = Modifier) {
+private fun PdfPageViewer(file: File, knownPageCount: Int? = null, modifier: Modifier = Modifier) {
     val density      = LocalDensity.current
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val renderWidthPx = remember(screenWidthDp, density) {
@@ -560,7 +560,8 @@ private fun PdfPageViewer(file: File, modifier: Modifier = Modifier) {
     }
 
     var pageIndex  by remember { mutableStateOf(0) }
-    var totalPages by remember { mutableStateOf(0) }
+    // Pre-seed from the stored page count so the total is shown before first render.
+    var totalPages by remember { mutableStateOf(knownPageCount ?: 0) }
     var bitmap     by remember { mutableStateOf<Bitmap?>(null) }
     var renderError by remember { mutableStateOf<String?>(null) }
 
