@@ -49,11 +49,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import android.widget.Toast
-import com.arawn.core.database.ArawnDatabase
 import com.arawn.core.database.CoordinatePair
-import com.arawn.scanner.export.DataLogBackupExporter
 import com.arawn.scanner.export.EnrichedCsvExporter
-import com.arawn.scanner.export.HtmlReportExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.OfflineMapPanel
 import kotlinx.coroutines.launch
@@ -66,6 +63,8 @@ import kotlinx.coroutines.launch
  * fused [ScanPacket]s as they arrive.
  */
 class MainActivity : ComponentActivity() {
+
+    private lateinit var container: AppContainer
 
     private var service: WirelessScannerService? by mutableStateOf(null)
     private var scanning by mutableStateOf(false)
@@ -98,6 +97,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        container = (application as ArawnApplication).container
         setContent {
             ArawnTheme {
                 val lines = remember { mutableStateListOf<String>() }
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
                 // projection — no signal subtree pulled into memory.
                 LaunchedEffect(viewMode, lines.size) {
                     if (viewMode != ViewMode.MAP) return@LaunchedEffect
-                    val dao = ArawnDatabase.get(applicationContext).wirelessDao()
+                    val dao = container.wirelessDao
                     val sessionId = dao.getLatestSessionId()
                     val coords = sessionId?.let { dao.getSessionCoordinates(it) }.orEmpty()
                     mapCoords.clear()
@@ -236,8 +236,8 @@ class MainActivity : ComponentActivity() {
      */
     private fun exportLatestSession() {
         lifecycleScope.launch {
-            val wigle = DataLogBackupExporter(applicationContext).exportLatestSession()
-            val enriched = EnrichedCsvExporter(applicationContext).exportLatestSession()
+            val wigle = container.dataLogExporter.exportLatestSession()
+            val enriched = container.enrichedCsvExporter.exportLatestSession()
             val enrichedNote = when (enriched) {
                 is EnrichedCsvExporter.Result.Success -> "enriched: ${enriched.rows} rows"
                 is EnrichedCsvExporter.Result.Failure -> "enriched failed: ${enriched.message}"
@@ -255,7 +255,7 @@ class MainActivity : ComponentActivity() {
     private fun generateHtmlReport() {
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "Generating report…", Toast.LENGTH_SHORT).show()
-            val result = HtmlReportExporter(applicationContext).exportLatestSession()
+            val result = container.htmlReportExporter.exportLatestSession()
             Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
         }
     }
