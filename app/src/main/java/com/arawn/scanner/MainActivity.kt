@@ -198,6 +198,7 @@ class MainActivity : AppCompatActivity() {
                             AppScreen.OPS      -> OpsScreen(
                                 wirelessDao  = container.wirelessDao,
                                 geoDao       = container.geoDao,
+                                missionDao   = container.missionDao,
                                 livePosition = liveCoord,
                             )
                             AppScreen.RECON    -> ScannerScreen(

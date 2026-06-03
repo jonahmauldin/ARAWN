@@ -8,6 +8,8 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -22,10 +24,12 @@ import com.arawn.core.database.RouteWithPoints
 import com.arawn.core.database.WaypointEntity
 import com.arawn.core.database.WaypointType
 import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
@@ -40,21 +44,18 @@ data class SessionTrack(
 )
 
 /**
- * Operations Center map panel.
+ * Full-featured Ops Center map panel.
  *
- * Renders:
- *  - Session GPS tracks as colour-coded polylines (green = latest untagged,
- *    mission-tagged tracks use a deterministic hue derived from missionId).
- *  - All waypoints as small type-coloured diamond markers.
- *  - All planned routes as thin cyan polylines.
- *  - Live position as an amber dot.
+ * Renders session GPS tracks, waypoints, and planned routes as distinct overlay
+ * layers. Each layer can be toggled on/off independently.
  *
- * Tile source: online OSM MAPNIK by default. When [activePackFile] is non-null
- * and points to a valid .mbtiles/.sqlite archive, the map is re-created with
- * osmdroid's OfflineTileProvider so no network tiles are fetched.
+ * Interaction:
+ *  - Long press on an empty map area → [onMapLongPress] with the lat/lon of the
+ *    press point. The caller shows a "Place Pin" dialog and inserts a waypoint.
+ *  - Tap on a waypoint marker → [onWaypointTap]. The caller shows an edit sheet.
  *
- * Max zoom is 21 — tiles are scaled from zoom 19 above that, which looks
- * pixelated but is still useful for precise location pinpointing.
+ * Tile source: online OSM MAPNIK by default; [activePackFile] switches to an
+ * osmdroid OfflineTileProvider without recreating the composable.
  */
 @Composable
 fun OpsMapPanel(
@@ -63,6 +64,11 @@ fun OpsMapPanel(
     waypoints: List<WaypointEntity> = emptyList(),
     routes: List<RouteWithPoints> = emptyList(),
     activePackFile: File? = null,
+    showTracks: Boolean = true,
+    showWaypoints: Boolean = true,
+    showRoutes: Boolean = true,
+    onMapLongPress: ((Double, Double) -> Unit)? = null,
+    onWaypointTap: ((WaypointEntity) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -74,7 +80,15 @@ fun OpsMapPanel(
         }
     }
 
-    // Re-create MapView when the active tile pack changes.
+    // Stable refs so closures inside AndroidView always call the latest callback
+    // without triggering a MapView recreation.
+    val onLongPressRef   = remember { mutableStateOf(onMapLongPress) }
+    val onWaypointTapRef = remember { mutableStateOf(onWaypointTap) }
+    SideEffect {
+        onLongPressRef.value   = onMapLongPress
+        onWaypointTapRef.value = onWaypointTap
+    }
+
     val mapView = remember(activePackFile?.path) {
         buildMapView(context, activePackFile)
     }
@@ -89,14 +103,13 @@ fun OpsMapPanel(
         }
     }
 
-    // Keys used to throttle overlay rebuilds — reset on each MapView recreation.
     val trackRenderKey    = remember(activePackFile?.path) { intArrayOf(-1) }
     val waypointRenderKey = remember(activePackFile?.path) { intArrayOf(-1) }
     val routeRenderKey    = remember(activePackFile?.path) { intArrayOf(-1) }
     val framed            = remember(activePackFile?.path) { booleanArrayOf(false) }
+    val eventsAdded       = remember(activePackFile?.path) { booleanArrayOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    // Keyed to pack path so the old MapView is detached before the new one is set up.
     DisposableEffect(lifecycleOwner, activePackFile?.path) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -117,57 +130,84 @@ fun OpsMapPanel(
         modifier = modifier.clipToBounds(),
         update   = { mv ->
 
-            // ── Waypoints ──────────────────────────────────────────────────
-            val waypointKey = waypoints.size
-            if (waypointRenderKey[0] != waypointKey) {
-                waypointRenderKey[0] = waypointKey
-                mv.overlays.removeAll { it is Marker && it !== liveMarker }
-                waypoints.forEach { wp ->
-                    val m = Marker(mv).apply {
-                        position = GeoPoint(wp.latitude, wp.longitude)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                        icon = buildWaypointIcon(context, wp.type)
-                        title = wp.name
-                        setInfoWindow(null)
+            // ── Map-events overlay (long press → pin) ─────────────────────
+            if (!eventsAdded[0]) {
+                val receiver = object : MapEventsReceiver {
+                    override fun singleTapConfirmedHelper(p: GeoPoint) = false
+                    override fun longPressHelper(p: GeoPoint): Boolean {
+                        onLongPressRef.value?.invoke(p.latitude, p.longitude)
+                        return true
                     }
-                    mv.overlays.add(m)
                 }
+                mv.overlays.add(MapEventsOverlay(receiver))
+                eventsAdded[0] = true
             }
 
             // ── Planned routes ─────────────────────────────────────────────
-            val routeKey = routes.sumOf { it.points.size }
+            val routeKey = if (showRoutes) routes.sumOf { it.points.size } else -999
             if (routeRenderKey[0] != routeKey) {
                 routeRenderKey[0] = routeKey
-                mv.overlays.removeAll { it is Polyline && (it.outlinePaint.color == ROUTE_COLOR) }
-                routes.forEach { rw ->
-                    if (rw.points.size < 2) return@forEach
-                    val poly = Polyline(mv)
-                    poly.outlinePaint.color       = ROUTE_COLOR
-                    poly.outlinePaint.strokeWidth = 3f
-                    poly.outlinePaint.strokeCap   = Paint.Cap.ROUND
-                    poly.outlinePaint.alpha       = 180
-                    poly.setPoints(rw.points.sortedBy { it.seq }
-                        .map { GeoPoint(it.latitude, it.longitude) })
-                    mv.overlays.add(0, poly)
+                mv.overlays.removeAll { it is Polyline && it.outlinePaint.color == ROUTE_COLOR }
+                if (showRoutes) {
+                    routes.forEach { rw ->
+                        if (rw.points.size < 2) return@forEach
+                        val poly = Polyline(mv)
+                        poly.outlinePaint.color       = ROUTE_COLOR
+                        poly.outlinePaint.strokeWidth = 3f
+                        poly.outlinePaint.strokeCap   = Paint.Cap.ROUND
+                        poly.outlinePaint.alpha       = 180
+                        poly.setPoints(rw.points.sortedBy { it.seq }
+                            .map { GeoPoint(it.latitude, it.longitude) })
+                        mv.overlays.add(0, poly)
+                    }
+                }
+            }
+
+            // ── Waypoint markers ───────────────────────────────────────────
+            val waypointKey = if (showWaypoints) waypoints.size else -999
+            if (waypointRenderKey[0] != waypointKey) {
+                waypointRenderKey[0] = waypointKey
+                mv.overlays.removeAll { it is Marker && it !== liveMarker }
+                if (showWaypoints) {
+                    waypoints.forEach { wp ->
+                        // Skip placeholder waypoints at origin
+                        if (wp.latitude == 0.0 && wp.longitude == 0.0) return@forEach
+                        val m = Marker(mv).apply {
+                            position = GeoPoint(wp.latitude, wp.longitude)
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                            icon = buildWaypointIcon(context, wp.type)
+                            title = wp.name
+                            setInfoWindow(null)
+                            setOnMarkerClickListener { _, _ ->
+                                onWaypointTapRef.value?.invoke(wp)
+                                true
+                            }
+                        }
+                        mv.overlays.add(m)
+                    }
                 }
             }
 
             // ── Session tracks ─────────────────────────────────────────────
-            val totalPoints = tracks.sumOf { it.coordinates.size }
+            val totalPoints = if (showTracks) tracks.sumOf { it.coordinates.size } else -999
             if (trackRenderKey[0] != totalPoints) {
                 trackRenderKey[0] = totalPoints
                 mv.overlays.removeAll {
                     it is Polyline && it.outlinePaint.color != ROUTE_COLOR
                 }
-                tracks.forEachIndexed { i, track ->
-                    if (track.coordinates.size < 2) return@forEachIndexed
-                    val poly = Polyline(mv)
-                    poly.outlinePaint.color      = sessionColor(i, track.missionId)
-                    poly.outlinePaint.strokeWidth = 6f
-                    poly.outlinePaint.strokeCap   = Paint.Cap.ROUND
-                    poly.outlinePaint.strokeJoin  = Paint.Join.ROUND
-                    poly.setPoints(track.coordinates.map { GeoPoint(it.latitude, it.longitude) })
-                    mv.overlays.add(0, poly)
+                if (showTracks) {
+                    tracks.forEachIndexed { i, track ->
+                        if (track.coordinates.size < 2) return@forEachIndexed
+                        val poly = Polyline(mv)
+                        poly.outlinePaint.color       = sessionColor(i, track.missionId)
+                        poly.outlinePaint.strokeWidth = 6f
+                        poly.outlinePaint.strokeCap   = Paint.Cap.ROUND
+                        poly.outlinePaint.strokeJoin  = Paint.Join.ROUND
+                        poly.setPoints(
+                            track.coordinates.map { GeoPoint(it.latitude, it.longitude) }
+                        )
+                        mv.overlays.add(0, poly)
+                    }
                 }
 
                 if (!framed[0] && totalPoints > 0) {
@@ -179,7 +219,7 @@ fun OpsMapPanel(
                 }
             }
 
-            // ── Live position ──────────────────────────────────────────────
+            // ── Live position marker ───────────────────────────────────────
             if (livePosition != null) {
                 liveMarker.position  = GeoPoint(livePosition.latitude, livePosition.longitude)
                 liveMarker.isEnabled = true
@@ -199,7 +239,7 @@ fun OpsMapPanel(
 }
 
 // =============================================================================
-//  Helpers
+//  Shared helpers (internal so WaypointMiniMap can reuse them)
 // =============================================================================
 
 private fun buildMapView(context: Context, packFile: File?): MapView {
@@ -213,7 +253,6 @@ private fun buildMapView(context: Context, packFile: File?): MapView {
             mv.tileProvider = provider
             mv.setUseDataConnection(false)
         }.onFailure {
-            // Corrupt or unsupported archive — fall back to online.
             mv.setUseDataConnection(true)
             mv.setTileSource(TileSourceFactory.MAPNIK)
         }
@@ -228,13 +267,41 @@ private fun buildMapView(context: Context, packFile: File?): MapView {
     return mv
 }
 
-/**
- * Session track color.
- * Mission-tagged tracks get a deterministic hue from the mission ID (golden-angle
- * spread so adjacent IDs land far apart on the color wheel).
- * Un-tagged tracks cycle through [TRACK_COLORS] with the most-recent session
- * (index 0) getting terminal green.
- */
+internal fun waypointColor(type: WaypointType): Int = when (type) {
+    WaypointType.GENERIC     -> 0xFFE6E6E6.toInt()
+    WaypointType.PARKING     -> 0xFF4FA3D8.toInt()
+    WaypointType.ENTRY       -> 0xFF35D07F.toInt()
+    WaypointType.OBSERVATION -> 0xFFE0B341.toInt()
+    WaypointType.EXIT        -> 0xFF888888.toInt()
+    WaypointType.HAZARD      -> 0xFFCC3B3B.toInt()
+    WaypointType.CACHE       -> 0xFF9B59B6.toInt()
+    WaypointType.POI         -> 0xFF1ABC9C.toInt()
+}
+
+/** Diamond-shaped marker icon, colour-coded by waypoint type. */
+internal fun buildWaypointIcon(context: Context, type: WaypointType): Drawable {
+    val dp   = context.resources.displayMetrics.density
+    val size = (dp * 14).toInt().coerceAtLeast(10)
+    val bitmap = createBitmap(size, size)
+    val canvas = Canvas(bitmap)
+    val r = size / 2f
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = waypointColor(type); style = Paint.Style.FILL
+    }
+    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.parseColor("#0A0A0A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp * 1.2f
+    }
+    val path = android.graphics.Path().apply {
+        moveTo(r, 0f); lineTo(size.toFloat(), r)
+        lineTo(r, size.toFloat()); lineTo(0f, r); close()
+    }
+    canvas.drawPath(path, fill)
+    canvas.drawPath(path, stroke)
+    return BitmapDrawable(context.resources, bitmap)
+}
+
 private fun sessionColor(index: Int, missionId: Long?): Int {
     if (missionId != null) {
         val hue = (missionId * 137.508f) % 360f
@@ -243,61 +310,17 @@ private fun sessionColor(index: Int, missionId: Long?): Int {
     return TRACK_COLORS[index % TRACK_COLORS.size]
 }
 
-/** Colors for un-tagged session tracks, newest session = index 0 (terminal green). */
 private val TRACK_COLORS = listOf(
-    0xFF35D07F.toInt(), // terminal green  (most recent)
-    0xFFE0B341.toInt(), // amber
-    0xFF4FA3D8.toInt(), // steel blue
-    0xFFCC5A5A.toInt(), // red
-    0xFF9B59B6.toInt(), // purple
-    0xFF1ABC9C.toInt(), // teal
+    0xFF35D07F.toInt(),
+    0xFFE0B341.toInt(),
+    0xFF4FA3D8.toInt(),
+    0xFFCC5A5A.toInt(),
+    0xFF9B59B6.toInt(),
+    0xFF1ABC9C.toInt(),
 )
 
-/** Thin cyan used for planned route polylines — distinct from session tracks. */
 private const val ROUTE_COLOR = 0xFF00CFCF.toInt()
 
-/** WaypointType → ARGB marker fill color. */
-private fun waypointColor(type: WaypointType): Int = when (type) {
-    WaypointType.GENERIC     -> 0xFFE6E6E6.toInt() // white
-    WaypointType.PARKING     -> 0xFF4FA3D8.toInt() // steel blue
-    WaypointType.ENTRY       -> 0xFF35D07F.toInt() // green
-    WaypointType.OBSERVATION -> 0xFFE0B341.toInt() // amber
-    WaypointType.EXIT        -> 0xFF888888.toInt() // gray
-    WaypointType.HAZARD      -> 0xFFCC3B3B.toInt() // red
-    WaypointType.CACHE       -> 0xFF9B59B6.toInt() // purple
-    WaypointType.POI         -> 0xFF1ABC9C.toInt() // teal
-}
-
-/** Small diamond marker for a waypoint, colour-coded by type. */
-private fun buildWaypointIcon(context: Context, type: WaypointType): Drawable {
-    val dp = context.resources.displayMetrics.density
-    val size = (dp * 12).toInt().coerceAtLeast(8)
-    val bitmap = createBitmap(size, size)
-    val canvas = Canvas(bitmap)
-    val r = size / 2f
-    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = waypointColor(type)
-        style = Paint.Style.FILL
-    }
-    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#0A0A0A")
-        style = Paint.Style.STROKE
-        strokeWidth = dp * 1f
-    }
-    // Draw a diamond (rotated square) shape.
-    val path = android.graphics.Path().apply {
-        moveTo(r, 0f)
-        lineTo(size.toFloat(), r)
-        lineTo(r, size.toFloat())
-        lineTo(0f, r)
-        close()
-    }
-    canvas.drawPath(path, fill)
-    canvas.drawPath(path, stroke)
-    return BitmapDrawable(context.resources, bitmap)
-}
-
-/** Small filled amber circle — marks the current live GPS position. */
 private fun buildLiveIcon(context: Context): Drawable {
     val dp = context.resources.displayMetrics.density
     val sizePx = (dp * 14).toInt().coerceAtLeast(10)
@@ -306,12 +329,10 @@ private fun buildLiveIcon(context: Context): Drawable {
     val r = sizePx / 2f
     val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = AndroidColor.parseColor("#0A0A0A")
-        style = Paint.Style.STROKE
-        strokeWidth = dp * 1.5f
+        style = Paint.Style.STROKE; strokeWidth = dp * 1.5f
     }
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#E0B341") // amber
-        style = Paint.Style.FILL
+        color = AndroidColor.parseColor("#E0B341"); style = Paint.Style.FILL
     }
     canvas.drawCircle(r, r, r - ring.strokeWidth, fill)
     canvas.drawCircle(r, r, r - ring.strokeWidth, ring)

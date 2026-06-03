@@ -53,6 +53,8 @@ import com.arawn.core.database.SessionEntity
 import com.arawn.core.database.WaypointEntity
 import com.arawn.core.database.WaypointType
 import com.arawn.core.database.WirelessDao
+import com.arawn.scanner.WaypointMiniMap
+import com.arawn.scanner.hasLocation
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -394,13 +396,24 @@ private fun MissionDetailContent(
         }
 
         Spacer(Modifier.height(8.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Color(0xFF1A1A1A))
-        )
-        Spacer(Modifier.height(4.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
+
+        // ── Waypoint mini-map ─────────────────────────────────────────────
+        // Shown only when at least one waypoint has a real map position.
+        val mappableWaypoints = waypoints.filter { it.hasLocation() }
+        if (mappableWaypoints.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+            ) {
+                WaypointMiniMap(
+                    waypoints = mappableWaypoints,
+                    modifier  = Modifier.fillMaxSize(),
+                )
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
+        }
 
         // Scrollable body
         LazyColumn(
@@ -679,10 +692,13 @@ private fun WaypointRow(waypoint: WaypointEntity, onDelete: () -> Unit) {
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
             )
+            val locationText = if (waypoint.hasLocation())
+                "%.5f, %.5f".format(Locale.US, waypoint.latitude, waypoint.longitude)
+            else
+                "PENDING LOCATION — place pin in OPS"
             Text(
-                text = "${waypoint.type.displayLabel()}  " +
-                    "%.5f, %.5f".format(Locale.US, waypoint.latitude, waypoint.longitude),
-                color = Color(0xFF555555),
+                text = "${waypoint.type.displayLabel()}  $locationText",
+                color = if (waypoint.hasLocation()) Color(0xFF555555) else Color(0xFF444444),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
             )
@@ -816,27 +832,24 @@ private fun AddItemDialog(
     )
 }
 
+/**
+ * Adds a waypoint to a mission with name + type only.
+ * Coordinates default to (0, 0) — displayed as "PENDING LOCATION" in the list
+ * until the user places the pin precisely via OPS → long-press → DROP PIN.
+ */
 @Composable
 private fun AddWaypointDialog(
     onConfirm: (name: String, type: WaypointType, lat: Double, lon: Double) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val types = WaypointType.entries
+    val types     = WaypointType.entries
     var name      by remember { mutableStateOf("") }
     var typeIndex by remember { mutableStateOf(0) }
-    var lat       by remember { mutableStateOf("") }
-    var lon       by remember { mutableStateOf("") }
-
-    val type   = types[typeIndex]
-    val latVal = lat.toDoubleOrNull()
-    val lonVal = lon.toDoubleOrNull()
-    val valid  = name.isNotBlank() &&
-        latVal != null && latVal >= -90.0 && latVal <= 90.0 &&
-        lonVal != null && lonVal >= -180.0 && lonVal <= 180.0
+    val type      = types[typeIndex]
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = PanelBlack,
+        containerColor   = PanelBlack,
         title = {
             Text("ADD WAYPOINT", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
         },
@@ -844,60 +857,39 @@ private fun AddWaypointDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TerminalTextField(value = name, label = "NAME", onValueChange = { name = it })
 
-                // Type cycler — avoids nested scroll
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "◀",
-                        color = Amber,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
+                        "◀", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 14.sp,
                         modifier = Modifier.clickable {
                             typeIndex = (typeIndex - 1 + types.size) % types.size
                         },
                     )
                     Text(
-                        text = "[ ${type.displayLabel()} ]",
-                        color = Amber,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
+                        "[ ${type.displayLabel()} ]",
+                        color = Amber, fontFamily = FontFamily.Monospace, fontSize = 12.sp,
                     )
                     Text(
-                        text = "▶",
-                        color = Amber,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
-                        modifier = Modifier.clickable {
-                            typeIndex = (typeIndex + 1) % types.size
-                        },
+                        "▶", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 14.sp,
+                        modifier = Modifier.clickable { typeIndex = (typeIndex + 1) % types.size },
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TerminalTextField(
-                        value = lat,
-                        label = "LAT",
-                        onValueChange = { lat = it },
-                        keyboardType = KeyboardType.Decimal,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TerminalTextField(
-                        value = lon,
-                        label = "LON",
-                        onValueChange = { lon = it },
-                        keyboardType = KeyboardType.Decimal,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                Text(
+                    text       = "Tip: long-press the OPS map to place pins\nprecisely — then use OPS → PLAN to create\nmissions from them without typing coordinates.",
+                    color      = Color(0xFF444444),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 10.sp,
+                )
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { if (valid) onConfirm(name.trim(), type, latVal!!, lonVal!!) },
-                enabled = valid,
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), type, 0.0, 0.0) },
             ) {
                 Text("ADD", fontFamily = FontFamily.Monospace, color = TerminalGreen)
             }
