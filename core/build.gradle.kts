@@ -27,6 +27,12 @@ android {
     }
 }
 
+// Tell Room's KSP processor where to write exported schema JSON files.
+// These files serve as the authoritative diff history for migration tests.
+ksp {
+    arg("room.schemaLocation", "${projectDir}/schemas")
+}
+
 dependencies {
     implementation(libs.kotlinx.coroutines.android)
 

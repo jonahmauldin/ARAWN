@@ -19,8 +19,8 @@ import androidx.room.RoomDatabase
         WifiApEntity::class,
         BleDeviceEntity::class,
     ],
-    version = 3, // v3 (Phase 2): + classification columns on wifi_access_points & ble_devices
-    exportSchema = false, // flip to true + set room.schemaLocation once migrations begin
+    version = 3,
+    exportSchema = true, // schema JSON written to core/schemas/ via room.schemaLocation KSP arg
 )
 abstract class ArawnDatabase : RoomDatabase() {
 
@@ -43,9 +43,7 @@ abstract class ArawnDatabase : RoomDatabase() {
                 ArawnDatabase::class.java,
                 DB_NAME,
             )
-                // Dev-phase convenience: a schema bump wipes local data instead of
-                // crashing. Replace with real Migrations before any public release.
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }
