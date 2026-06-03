@@ -62,6 +62,11 @@
     <!-- API 33+: required to post the persistent service notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- ============================================================= -->
+    <!--  BIOMETRIC  (Phase E: Vault screen authentication gate)       -->
+    <!-- ============================================================= -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <!-- Hardware feature hints (not hard requirements, so the build still
          installs broadly). -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />

@@ -36,8 +36,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 20
-        versionName = "0.8.0-phaseD"
+        versionCode = 21
+        versionName = "0.9.0-phaseE"
     }
 
     signingConfigs {
@@ -118,4 +118,10 @@ dependencies {
     // osmdroid — OPS Center multi-track map (same dep as :recon, declared here so :app
     // can reference Polyline / Marker / BoundingBox directly in OpsMapPanel.kt).
     implementation(libs.osmdroid.android)
+
+    // Phase E: Vault / Biometric
+    // AppCompat required by BiometricPrompt (needs FragmentActivity).
+    implementation(libs.androidx.appcompat)
+    // BiometricPrompt — fingerprint / device-credential gate for the Vault screen.
+    implementation(libs.androidx.biometric)
 }

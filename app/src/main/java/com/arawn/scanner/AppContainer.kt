@@ -1,6 +1,7 @@
 package com.arawn.scanner
 
 import android.content.Context
+import com.arawn.core.crypto.VaultCrypto
 import com.arawn.core.database.ArawnDatabase
 import com.arawn.core.database.AttachmentDao
 import com.arawn.core.database.DocumentDao
@@ -12,6 +13,7 @@ import com.arawn.core.database.WirelessDao
 import com.arawn.scanner.export.DataLogBackupExporter
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter
+import com.arawn.scanner.vault.VaultRepository
 
 /**
  * Manual dependency container — the single source of truth for app-scoped
@@ -43,4 +45,10 @@ class AppContainer(context: Context) {
     val dataLogExporter: DataLogBackupExporter by lazy { DataLogBackupExporter(appContext) }
     val enrichedCsvExporter: EnrichedCsvExporter by lazy { EnrichedCsvExporter(appContext) }
     val htmlReportExporter: HtmlReportExporter by lazy { HtmlReportExporter(appContext) }
+
+    // Phase E: Vault encryption
+    val vaultCrypto: VaultCrypto by lazy { VaultCrypto(appContext) }
+    val vaultRepository: VaultRepository by lazy {
+        VaultRepository(appContext, vaultDao, vaultCrypto)
+    }
 }

@@ -7,9 +7,12 @@ import android.content.ServiceConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,13 +53,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import android.widget.Toast
 import com.arawn.core.database.CoordinatePair
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.OfflineMapPanel
+import com.arawn.scanner.vault.VaultScreen
 import kotlinx.coroutines.launch
 
 /**
@@ -66,12 +69,15 @@ import kotlinx.coroutines.launch
  * [WirelessScannerService], and renders the operator terminal that streams
  * fused [ScanPacket]s as they arrive.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private lateinit var container: AppContainer
 
     private var service: WirelessScannerService? by mutableStateOf(null)
     private var scanning by mutableStateOf(false)
+
+    /** True while the Vault screen is unlocked. Cleared on app background or tab change. */
+    private var isVaultUnlocked by mutableStateOf(false)
 
     /** True once bindService() has been called and not yet unbound. */
     private var bindRequested = false
@@ -193,7 +199,12 @@ class MainActivity : ComponentActivity() {
                                 wirelessDao          = container.wirelessDao,
                                 htmlReportExporter   = container.htmlReportExporter,
                             )
-                            AppScreen.VAULT    -> VaultScreen()
+                            AppScreen.VAULT    -> VaultScreen(
+                                isUnlocked      = isVaultUnlocked,
+                                onAuthenticate  = { authenticateVault() },
+                                vaultRepository = container.vaultRepository,
+                                vaultDao        = container.vaultDao,
+                            )
                         }
                     }
                 }
@@ -212,6 +223,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         doUnbind()
+        isVaultUnlocked = false  // auto-lock when app goes to background
     }
 
     private fun doBind() {
@@ -303,6 +315,54 @@ class MainActivity : ComponentActivity() {
             val result = container.htmlReportExporter.exportLatestSession()
             Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    // ---- Vault biometric authentication --------------------------------
+
+    /**
+     * Launch a [BiometricPrompt] to authenticate the user before showing the
+     * Vault contents. On success, [isVaultUnlocked] is set to true.
+     *
+     * Allows both biometric (fingerprint / face) and device credential (PIN /
+     * pattern / password) so the app works even without enrolled biometrics.
+     * Falls back gracefully when the device has no secure lock screen.
+     */
+    private fun authenticateVault() {
+        val canAuth = BiometricManager.from(this).canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        )
+        if (canAuth == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED ||
+            canAuth == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE
+        ) {
+            // No biometric / credential enrolled — unlock directly (device has no lock)
+            isVaultUnlocked = true
+            return
+        }
+
+        val executor = ContextCompat.getMainExecutor(this)
+        val callback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                isVaultUnlocked = true
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                // User cancelled or hardware error — stay locked
+            }
+            override fun onAuthenticationFailed() {
+                // Biometric not recognised — prompt stays open, no state change
+            }
+        }
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("ARAWN VAULT")
+            .setSubtitle("Authenticate to access encrypted storage")
+            .setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+            .build()
+
+        BiometricPrompt(this, executor, callback).authenticate(promptInfo)
     }
 
     private fun requiredPermissions(): List<String> = buildList {
