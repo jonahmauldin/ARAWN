@@ -20,7 +20,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // net.zetetic:sqlcipher-android (4.5.5+) is on Maven Central — no extra repo needed.
     }
 }
 

@@ -43,11 +43,6 @@ dependencies {
     api(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
-    // SQLCipher — whole-database AES-256 encryption (Phase E).
-    // Exposed via `api` so :app can reference SupportFactory/SQLCipherUtils
-    // without re-declaring the dep.
-    api(libs.sqlcipher.android)
-
     // Tink — AEAD per-file encryption for Vault entries (Phase E).
     implementation(libs.tink.android)
 
