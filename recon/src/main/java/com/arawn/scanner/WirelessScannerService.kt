@@ -294,25 +294,27 @@ class WirelessScannerService : Service() {
         startSessionWriter()
 
         // Location heartbeat — every fix snapshots Wi-Fi/BLE into a packet. We
-        // listen on BOTH the satellite GPS provider (precise, but outdoor-only and
-        // slow to lock) and the network provider (coarse, but works indoors via
-        // Wi-Fi/cell), so the console and map come alive inside too. Both remain
-        // strictly receive-only — no spec constraint is touched.
+        // listen on GPS, network (cell/Wi-Fi, works indoors), and passive (piggybacks
+        // on any other app's location request) so the console comes alive quickly.
         val lm = locationManager
         if (lm != null && hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            val fineGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+            val gpsOk  = runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)
+            val netOk  = runCatching { lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)
+            val passOk = runCatching { lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) }.getOrDefault(false)
+
             val providers = buildList {
-                if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
-                    runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }
-                        .getOrDefault(false)
-                ) {
-                    add(LocationManager.GPS_PROVIDER)
-                }
-                if (runCatching { lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }
-                        .getOrDefault(false)
-                ) {
-                    add(LocationManager.NETWORK_PROVIDER)
-                }
+                if (fineGranted && gpsOk)  add(LocationManager.GPS_PROVIDER)
+                if (netOk)                 add(LocationManager.NETWORK_PROVIDER)
+                // PASSIVE piggybacks on any app's location request — fires even
+                // indoors when GPS and network are slow to produce a first fix.
+                if (fineGranted && passOk) add(LocationManager.PASSIVE_PROVIDER)
             }
+
+            android.util.Log.i(TAG,
+                "Loc start: providers=$providers fine=$fineGranted " +
+                "gps=$gpsOk net=$netOk pass=$passOk")
+
             providers.forEach { provider ->
                 try {
                     lm.requestLocationUpdates(
@@ -331,10 +333,32 @@ class WirelessScannerService : Service() {
 
             // Kickstart: emit one packet from the freshest last-known fix so the
             // UI populates immediately instead of waiting 30–90s for a cold lock.
-            val lastKnown = providers.asSequence()
+            val allKickstartProviders = listOf(
+                LocationManager.GPS_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.PASSIVE_PROVIDER,
+            )
+            val lastKnown = allKickstartProviders
                 .mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
                 .maxByOrNull { it.time }
-            if (lastKnown != null) emitPacket(lastKnown)
+            if (lastKnown != null) {
+                emitPacket(lastKnown)
+            } else {
+                // No cached fix yet (common after a fresh permission grant). Retry
+                // once NETWORK_PROVIDER has had time to acquire its first fix.
+                mainHandler.postDelayed({
+                    if (!_scanning.value) return@postDelayed
+                    val fix = allKickstartProviders
+                        .mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
+                        .maxByOrNull { it.time }
+                    android.util.Log.i(TAG, "Kickstart retry: fix=${fix?.provider}")
+                    if (fix != null) emitPacket(fix)
+                }, KICKSTART_RETRY_MS)
+            }
+        } else {
+            android.util.Log.w(TAG,
+                "Location unavailable: lm=${lm != null} " +
+                "coarse=${hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)}")
         }
 
         // Wi-Fi — register receiver + kick the periodic scan loop.
@@ -515,5 +539,6 @@ class WirelessScannerService : Service() {
         private const val WIFI_SCAN_INTERVAL_MS = 3_000L
         private const val BLE_STALE_MS = 30_000L
         private const val WRITE_BUFFER = 256 // scan windows buffered before DROP_OLDEST
+        private const val KICKSTART_RETRY_MS = 10_000L
     }
 }
