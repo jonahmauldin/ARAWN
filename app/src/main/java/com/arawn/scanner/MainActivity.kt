@@ -189,7 +189,10 @@ class MainActivity : ComponentActivity() {
                                 geoDao      = container.geoDao,
                                 wirelessDao = container.wirelessDao,
                             )
-                            AppScreen.REPORTS  -> ReportsScreen()
+                            AppScreen.REPORTS  -> com.arawn.scanner.reports.ReportsScreen(
+                                wirelessDao          = container.wirelessDao,
+                                htmlReportExporter   = container.htmlReportExporter,
+                            )
                             AppScreen.VAULT    -> VaultScreen()
                         }
                     }

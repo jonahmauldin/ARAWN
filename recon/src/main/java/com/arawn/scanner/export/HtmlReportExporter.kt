@@ -14,9 +14,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Generates a self-contained HTML report for one session and writes it to
- * Documents/ARAWN/ via MediaStore. No external libraries, no network calls —
- * all CSS, JavaScript, and chart/table logic is embedded inside the HTML file.
+ * Generates a self-contained HTML report and writes it to Documents/ARAWN/.
+ * All CSS, JS, and chart logic is embedded inline — no server or internet required.
+ * The map section uses a Canvas renderer (no Leaflet CDN dependency).
  */
 class HtmlReportExporter(context: Context) {
 
@@ -32,15 +32,25 @@ class HtmlReportExporter(context: Context) {
     suspend fun exportLatestSession(): ExportResult = withContext(Dispatchers.IO) {
         val id = dao.getLatestSessionId()
             ?: return@withContext ExportResult(false, "No sessions yet — run a survey first.")
-        exportSession(id)
+        exportSessions(listOf(id))
     }
 
-    suspend fun exportSession(sessionId: Long): ExportResult = withContext(Dispatchers.IO) {
+    suspend fun exportSession(sessionId: Long): ExportResult = exportSessions(listOf(sessionId))
+
+    /**
+     * Generate one combined report from one or more sessions.
+     * Wi-Fi/BLE rows are merged per-BSSID; tracks are concatenated and colour-coded.
+     */
+    suspend fun exportSessions(sessionIds: List<Long>): ExportResult = withContext(Dispatchers.IO) {
         runCatching {
-            val data = ReportDataCollector(dao, appContext).collect(sessionId)
-                ?: return@runCatching ExportResult(false, "Session $sessionId has no data.")
+            val data = ReportDataCollector(dao, appContext).collectMultiple(sessionIds)
+                ?: return@runCatching ExportResult(false, "Selected sessions have no data.")
             val html = HtmlReportRenderer.render(data)
-            val name = "ARAWN_Report_S${sessionId}_${STAMP.format(Date())}.html"
+            val stamp = STAMP.format(Date())
+            val name = if (sessionIds.size == 1)
+                "ARAWN_Report_S${sessionIds.first()}_$stamp.html"
+            else
+                "ARAWN_Report_Multi${sessionIds.size}_$stamp.html"
             val path = write(name, html)
                 ?: return@runCatching ExportResult(false, "MediaStore rejected the write.")
             ExportResult(true, "Report saved → $path", path)

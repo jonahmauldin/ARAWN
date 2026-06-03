@@ -44,21 +44,29 @@ data class BleEntry(
     val seenCount: Int,
 )
 
-data class TrackPoint(val lat: Double, val lon: Double, val tsMs: Long)
+/** GPS fix for the map track. [sessionId] is used to colour-code multi-session tracks. */
+data class TrackPoint(val lat: Double, val lon: Double, val tsMs: Long, val sessionId: Long = 0)
 
 data class ReportMeta(
     val appVersion: String,
     val deviceModel: String,
     val androidVersion: String,
     val exportMs: Long,
-    val sessionId: Long,
+    val sessionIds: List<Long>,
     val totalRecords: Int,
-)
+) {
+    /** Primary session id — backward-compat accessor for single-session callers. */
+    val sessionId: Long get() = sessionIds.first()
+}
 
 data class ReportData(
-    val session: ReportSession,
+    val sessions: List<ReportSession>,
     val wifi: List<WifiEntry>,
     val ble: List<BleEntry>,
     val track: List<TrackPoint>,
     val meta: ReportMeta,
-)
+) {
+    /** Primary session — backward-compat accessor used by [HtmlReportRenderer]. */
+    val session: ReportSession get() = sessions.first()
+    val isMultiSession: Boolean get() = sessions.size > 1
+}

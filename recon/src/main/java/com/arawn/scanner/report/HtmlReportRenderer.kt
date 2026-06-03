@@ -38,9 +38,23 @@ object HtmlReportRenderer {
         val openNets = data.wifi.count { it.securityType == "Open" }
 
         // ── Header
+        val sessionLabel = if (data.isMultiSession)
+            "Sessions " + data.sessions.joinToString(", ") { "#${it.sessionId}" }
+        else
+            "Session #${data.session.sessionId}"
+        val startLabel = if (data.isMultiSession)
+            "Started: ${ts(data.sessions.minOf { it.startMs })}"
+        else
+            "Started: ${ts(data.session.startMs)}"
+        val durationLabel = if (data.isMultiSession)
+            "${data.sessions.size} sessions merged"
+        else if (data.session.endMs != null)
+            "Duration: ${dur(data.session.durationMs)}"
+        else
+            "In Progress"
         append("""<div class="rpt-header"><div class="container">
 <div class="rpt-title">ARAWN // RF SURVEY REPORT</div>
-<div class="rpt-sub">Session #${data.session.sessionId} &nbsp;·&nbsp; Started: ${ts(data.session.startMs)} &nbsp;·&nbsp; ${if (data.session.endMs != null) "Duration: ${dur(data.session.durationMs)}" else "In Progress"} &nbsp;·&nbsp; ${data.meta.deviceModel} &nbsp;·&nbsp; Android ${data.meta.androidVersion}</div>
+<div class="rpt-sub">$sessionLabel &nbsp;·&nbsp; $startLabel &nbsp;·&nbsp; $durationLabel &nbsp;·&nbsp; ${data.meta.deviceModel} &nbsp;·&nbsp; Android ${data.meta.androidVersion}</div>
 </div></div>""")
 
         append("""<div class="container">""")
@@ -72,10 +86,10 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
 <div class="chart-card"><div class="chart-title">Wi-Fi Discovery Over Time</div><canvas id="chart-timeline"></canvas></div>
 </div>""")
 
-        // ── Map
+        // ── Map (canvas — no CDN dependency, works from file:// and content:// URIs)
         append("""<div class="card"><div class="section-title">Track Map
 <span class="map-legend"><span class="dot dot-wifi"></span>Wi-Fi <span class="dot dot-ble"></span>BLE <span class="dot dot-track"></span>Path</span>
-</div><div id="map"></div></div>""")
+</div><canvas id="map-canvas"></canvas></div>""")
 
         // ── Data tables (tabs)
         append("""<div class="card">
@@ -88,20 +102,17 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
 </div>""")
 
         // ── Footer
-        append("""<div class="rpt-footer">ARAWN v${data.meta.appVersion} &nbsp;·&nbsp; Session #${data.meta.sessionId} &nbsp;·&nbsp; Exported ${ts(data.meta.exportMs)} &nbsp;·&nbsp; ${data.meta.deviceModel} · Android ${data.meta.androidVersion} &nbsp;·&nbsp; ${data.meta.totalRecords} records</div>""")
+        val footerSessions = if (data.isMultiSession)
+            "Sessions " + data.meta.sessionIds.joinToString(", ") { "#$it" }
+        else
+            "Session #${data.meta.sessionId}"
+        append("""<div class="rpt-footer">ARAWN v${data.meta.appVersion} &nbsp;·&nbsp; $footerSessions &nbsp;·&nbsp; Exported ${ts(data.meta.exportMs)} &nbsp;·&nbsp; ${data.meta.deviceModel} · Android ${data.meta.androidVersion} &nbsp;·&nbsp; ${data.meta.totalRecords} records</div>""")
 
         append("</div>") // /container
 
         // ── Inline data + scripts (data first so JS can reference it)
         append("<script>const REPORT_DATA="); append(buildJson(data)); append(";</script>")
         append("<script>"); append(JS); append("</script>")
-        // Leaflet for the map; graceful fallback built into initMap() when offline
-        append("""<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster-src.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-<script>initMap();</script>""")
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -110,7 +121,17 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
         """<div class="stat-card"><div class="stat-value">${value.esc()}</div><div class="stat-label">${label.esc()}</div></div>"""
 
     private fun buildJson(data: ReportData) = buildString {
-        append("{\"session\":{\"id\":${data.session.sessionId},\"startMs\":${data.session.startMs},")
+        // sessions array (multi-session capable)
+        append("{\"sessions\":[")
+        data.sessions.forEachIndexed { i, s ->
+            if (i > 0) append(',')
+            append("{\"id\":${s.sessionId},\"startMs\":${s.startMs},")
+            append("\"endMs\":${s.endMs ?: "null"},\"duration\":${s.durationMs},")
+            append("\"points\":${s.pointsCollected}}")
+        }
+        append("],")
+        // legacy alias so any existing JS still works
+        append("\"session\":{\"id\":${data.session.sessionId},\"startMs\":${data.session.startMs},")
         append("\"endMs\":${data.session.endMs ?: "null"},\"duration\":${data.session.durationMs},")
         append("\"points\":${data.session.pointsCollected}},")
 
@@ -136,7 +157,7 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
         append("],\"track\":[")
         data.track.forEachIndexed { i, t ->
             if (i > 0) append(',')
-            append("{\"lat\":${c(t.lat)},\"lon\":${c(t.lon)},\"ts\":${t.tsMs}}")
+            append("{\"lat\":${c(t.lat)},\"lon\":${c(t.lon)},\"ts\":${t.tsMs},\"sid\":${t.sessionId}}")
         }
         append("],\"meta\":{\"appVersion\":${js(data.meta.appVersion)},")
         append("\"deviceModel\":${js(data.meta.deviceModel)},")
@@ -181,7 +202,7 @@ a{color:var(--cyan)}
 .chart-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px}
 .chart-title{color:var(--amber);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
 canvas{display:block;width:100%}
-#map{height:420px;border-radius:4px;background:#0d0d0d}
+#map-canvas{display:block;width:100%;height:420px;border-radius:4px;background:#0d0d0d}
 .map-legend{color:var(--dim);font-size:10px;display:flex;align-items:center;gap:8px;margin-left:auto}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:2px}
 .dot-wifi{background:var(--cyan)}.dot-ble{background:var(--red)}.dot-track{background:var(--green)}
@@ -434,28 +455,58 @@ function buildTables(){
     [{label:'Name'},{label:'MAC'},{label:'RSSI',r:rssiCell},{label:'Vendor'},{label:'Class'},{label:'Coordinates'},{label:'First Seen'},{label:'Last Seen'},{label:'Seen x'}]);
 }
 
-// ── Map
+// ── Map  (pure-Canvas, no CDN — works from file:// and content:// URIs)
 function initMap(){
-  var mapEl=gid('map');if(!mapEl)return;
-  if(typeof L==='undefined'){
-    mapEl.style.cssText='display:flex;align-items:center;justify-content:center;color:#6e6e6e;font-size:12px;';
-    mapEl.textContent='Map unavailable — open this report with internet access to load tiles';
-    return;
+  var canvas=cw('map-canvas');if(!canvas)return;
+  canvas.height=420;
+  var W=canvas.width||600,H=canvas.height;
+  var track=REPORT_DATA.track;
+  var wifi=REPORT_DATA.wifi.filter(function(w){return w.lat&&w.lon;});
+  var ble=REPORT_DATA.ble.filter(function(b){return b.lat&&b.lon;});
+  var ctx=canvas.getContext('2d');
+  ctx.fillStyle='#0d0d0d';ctx.fillRect(0,0,W,H);
+  if(!track.length&&!wifi.length&&!ble.length){
+    ctx.fillStyle='#444';ctx.font='12px monospace';ctx.textAlign='center';
+    ctx.fillText('// no track data for this report',W/2,H/2);return;
   }
-  var map=L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
-  var track=REPORT_DATA.track,wifi=REPORT_DATA.wifi,ble=REPORT_DATA.ble;
-  if(track.length>1){var pts=track.map(function(t){return[t.lat,t.lon];});L.polyline(pts,{color:'#35d07f',weight:3,opacity:0.75}).addTo(map);}
-  var hasCluster=typeof L.markerClusterGroup!=='undefined';
-  var wG=hasCluster?L.markerClusterGroup({maxClusterRadius:50}):L.layerGroup();
-  var bG=hasCluster?L.markerClusterGroup({maxClusterRadius:50}):L.layerGroup();
-  var mkW=L.divIcon({className:'',html:'<div style="width:8px;height:8px;background:#4fc3f7;border-radius:50%;border:1px solid #000;opacity:.9"></div>',iconSize:[8,8]});
-  var mkB=L.divIcon({className:'',html:'<div style="width:8px;height:8px;background:#ef5350;border-radius:50%;border:1px solid #000;opacity:.9"></div>',iconSize:[8,8]});
-  wifi.forEach(function(w){if(!w.lat||!w.lon)return;L.marker([w.lat,w.lon],{icon:mkW}).bindPopup('<b>'+(w.ssid||'(hidden)')+'</b><br>'+w.bssid+'<br>'+w.rssi+' dBm &nbsp;'+w.security+'<br><small>'+w.vendor+'</small>').addTo(wG);});
-  ble.forEach(function(b){if(!b.lat||!b.lon)return;L.marker([b.lat,b.lon],{icon:mkB}).bindPopup('<b>'+b.name+'</b><br>'+b.mac+'<br>'+b.rssi+' dBm<br><small>'+b.vendor+'</small>').addTo(bG);});
-  map.addLayer(wG);map.addLayer(bG);
-  var all=track.filter(function(t){return t.lat&&t.lon;}).map(function(t){return[t.lat,t.lon];});
-  if(all.length)map.fitBounds(L.latLngBounds(all).pad(0.12));else map.setView([0,0],2);
+  // Bounding box
+  var allLats=track.map(function(t){return t.lat;}).concat(wifi.map(function(w){return w.lat;})).concat(ble.map(function(b){return b.lat;}));
+  var allLons=track.map(function(t){return t.lon;}).concat(wifi.map(function(w){return w.lon;})).concat(ble.map(function(b){return b.lon;}));
+  var minLat=Math.min.apply(null,allLats),maxLat=Math.max.apply(null,allLats);
+  var minLon=Math.min.apply(null,allLons),maxLon=Math.max.apply(null,allLons);
+  var latR=maxLat-minLat||0.002,lonR=maxLon-minLon||0.002;
+  minLat-=latR*0.12;maxLat+=latR*0.12;minLon-=lonR*0.12;maxLon+=lonR*0.12;
+  function px(lon){return((lon-minLon)/(maxLon-minLon))*W;}
+  function py(lat){return H-((lat-minLat)/(maxLat-minLat))*H;}
+  // Palette for multi-session track colouring
+  var pal=['#35d07f','#e0b341','#4fc3f7','#ef5350','#ab47bc','#26c6da'];
+  var sidMap={},sidIdx=0;
+  // Track segments colour-coded by session id
+  if(track.length>1){
+    ctx.lineWidth=2;
+    var lastSid=-1,inPath=false;
+    for(var i=0;i<track.length;i++){
+      var t=track[i],sid=t.sid||0;
+      if(!(sid in sidMap)){sidMap[sid]=sidIdx++;}
+      if(sid!==lastSid){
+        if(inPath){ctx.stroke();}
+        ctx.beginPath();ctx.moveTo(px(t.lon),py(t.lat));
+        ctx.strokeStyle=pal[sidMap[sid]%pal.length];lastSid=sid;inPath=true;
+      }else{ctx.lineTo(px(t.lon),py(t.lat));}
+    }
+    if(inPath){ctx.stroke();}
+  }
+  // Wi-Fi dots (cyan)
+  wifi.forEach(function(w){ctx.beginPath();ctx.arc(px(w.lon),py(w.lat),3.5,0,6.283);ctx.fillStyle='#4fc3f7';ctx.fill();});
+  // BLE dots (red)
+  ble.forEach(function(b){ctx.beginPath();ctx.arc(px(b.lon),py(b.lat),2.5,0,6.283);ctx.fillStyle='#ef5350';ctx.fill();});
+  // Legend
+  var legItems=[[pal[0],'Track'],['#4fc3f7','Wi-Fi'],['#ef5350','BLE']];
+  ctx.font='10px monospace';ctx.textAlign='left';
+  legItems.forEach(function(item,i){
+    var x=8+i*68;ctx.fillStyle=item[0];ctx.fillRect(x,H-20,8,8);
+    ctx.fillStyle='#6e6e6e';ctx.fillText(item[1],x+11,H-13);
+  });
 }
 
 // ── Boot
@@ -464,6 +515,7 @@ document.addEventListener('DOMContentLoaded',function(){
   buildAnalysis();
   buildCharts();
   buildTables();
+  initMap();
 });
 
 })();
