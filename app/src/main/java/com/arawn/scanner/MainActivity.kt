@@ -61,6 +61,7 @@ import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.HeatmapPanel
 import com.arawn.scanner.ui.HeatPoint
 import com.arawn.scanner.ui.OfflineMapPanel
+import com.arawn.scanner.knowledge.KnowledgeScreen
 import com.arawn.scanner.vault.VaultScreen
 import kotlinx.coroutines.launch
 
@@ -222,6 +223,9 @@ class MainActivity : AppCompatActivity() {
                                 onAuthenticate  = { authenticateVault() },
                                 vaultRepository = container.vaultRepository,
                                 vaultDao        = container.vaultDao,
+                            )
+                            AppScreen.DOCS     -> KnowledgeScreen(
+                                knowledgeRepository = container.knowledgeRepository,
                             )
                         }
                     }

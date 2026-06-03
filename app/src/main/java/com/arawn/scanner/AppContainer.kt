@@ -13,6 +13,7 @@ import com.arawn.core.database.WirelessDao
 import com.arawn.scanner.export.DataLogBackupExporter
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter
+import com.arawn.scanner.knowledge.KnowledgeRepository
 import com.arawn.scanner.vault.VaultRepository
 
 /**
@@ -50,5 +51,10 @@ class AppContainer(context: Context) {
     val vaultCrypto: VaultCrypto by lazy { VaultCrypto(appContext) }
     val vaultRepository: VaultRepository by lazy {
         VaultRepository(appContext, vaultDao, vaultCrypto)
+    }
+
+    // Phase H: Knowledge Base
+    val knowledgeRepository: KnowledgeRepository by lazy {
+        KnowledgeRepository(appContext, documentDao, vaultDao, vaultRepository)
     }
 }

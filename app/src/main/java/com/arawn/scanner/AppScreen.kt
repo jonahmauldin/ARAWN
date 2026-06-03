@@ -7,4 +7,5 @@ enum class AppScreen(val label: String, val icon: String) {
     MISSIONS("MISSIONS", "◎"),
     REPORTS ("REPORTS",  "▤"),
     VAULT   ("VAULT",    "⊗"),
+    DOCS    ("DOCS",     "☰"),
 }
