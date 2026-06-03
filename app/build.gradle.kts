@@ -124,4 +124,12 @@ dependencies {
     implementation(libs.androidx.appcompat)
     // BiometricPrompt — fingerprint / device-credential gate for the Vault screen.
     implementation(libs.androidx.biometric)
+
+    // Phase I / E.1: SQLCipher whole-database AES-256 encryption.
+    // Declared in :app (not :core) — AGP android-library modules can't resolve
+    // the AAR's classes.jar from their Kotlin compile classpath on AGP 8.7.3.
+    // Package: net.sqlcipher.database (unchanged after the 4.5.5 artifact rename).
+    implementation("net.zetetic:sqlcipher-android:4.6.1") {
+        exclude(group = "com.android.support", module = "support-v4")
+    }
 }

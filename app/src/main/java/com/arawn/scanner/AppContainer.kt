@@ -1,8 +1,11 @@
 package com.arawn.scanner
 
 import android.content.Context
+import com.arawn.core.crypto.DbPassphraseManager
 import com.arawn.core.crypto.VaultCrypto
 import com.arawn.core.database.ArawnDatabase
+import net.sqlcipher.database.SQLCipherUtils
+import net.sqlcipher.database.SupportFactory
 import com.arawn.core.database.AttachmentDao
 import com.arawn.core.database.DocumentDao
 import com.arawn.core.database.GeoDao
@@ -29,7 +32,22 @@ class AppContainer(context: Context) {
 
     private val appContext: Context = context.applicationContext
 
-    val database: ArawnDatabase by lazy { ArawnDatabase.get(appContext) }
+    val database: ArawnDatabase by lazy {
+        val passphrase = DbPassphraseManager.getOrCreate(appContext)
+
+        // One-time in-place migration: encrypt an existing plaintext DB before
+        // Room opens it. SQLCipherUtils opens the file, checkpoints WAL, exports
+        // all pages into a temp encrypted file, then renames it over the original.
+        val dbFile = appContext.getDatabasePath("arawn.db")
+        if (dbFile.exists()) {
+            if (SQLCipherUtils.getDatabaseState(appContext, "arawn.db")
+                    == SQLCipherUtils.State.UNENCRYPTED) {
+                SQLCipherUtils.encryptTo(appContext, dbFile, passphrase)
+            }
+        }
+
+        ArawnDatabase.get(appContext, SupportFactory(passphrase))
+    }
 
     // Recon
     val wirelessDao: WirelessDao by lazy { database.wirelessDao() }

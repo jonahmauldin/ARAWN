@@ -5,9 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import com.arawn.core.crypto.DbPassphraseManager
-import net.sqlcipher.database.SQLCipherUtils
-import net.sqlcipher.database.SupportFactory
+import androidx.sqlite.db.SupportSQLiteOpenHelperFactory
 
 /**
  * Single local SQLite store for ARAWN. 100% on-device — no network, no cloud.
@@ -16,10 +14,10 @@ import net.sqlcipher.database.SupportFactory
  * instance is ever built, and it is anchored to the application context to
  * avoid leaking an Activity/Service.
  *
- * The database is encrypted with SQLCipher (AES-256-CBC). A random 32-byte
- * passphrase is generated once and stored in EncryptedSharedPreferences backed
- * by the Android Keystore. On first launch after Phase I, any existing
- * plaintext database is migrated in-place before Room opens it.
+ * The database is encrypted with SQLCipher (AES-256-CBC). The [SupportFactory]
+ * is constructed in [AppContainer] (which lives in :app and can depend on the
+ * sqlcipher-android AAR directly) and passed in via [get]. This keeps :core
+ * free of the SQLCipher compile-time dependency while still encrypting the DB.
  */
 @Database(
     entities = [
@@ -66,35 +64,34 @@ abstract class ArawnDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: ArawnDatabase? = null
 
-        fun get(context: Context): ArawnDatabase =
+        /**
+         * Returns the singleton database, creating it on first call.
+         *
+         * Pass a [SupportSQLiteOpenHelperFactory] (e.g. SQLCipher's SupportFactory)
+         * on the first call to enable whole-database encryption. Subsequent calls
+         * return the cached instance regardless of the factory argument.
+         */
+        fun get(
+            context: Context,
+            factory: SupportSQLiteOpenHelperFactory? = null,
+        ): ArawnDatabase =
             INSTANCE ?: synchronized(this) {
-                INSTANCE ?: build(context).also { INSTANCE = it }
+                INSTANCE ?: build(context, factory).also { INSTANCE = it }
             }
 
-        private fun build(context: Context): ArawnDatabase {
-            val appCtx = context.applicationContext
-            val passphrase = DbPassphraseManager.getOrCreate(appCtx)
-
-            // One-time migration: if an unencrypted DB exists (pre-Phase-I install),
-            // encrypt it in-place before Room opens it. SQLCipherUtils opens the
-            // plaintext file, checkpoints any WAL, exports all pages into a temp
-            // encrypted file, then renames it over the original.
-            val dbFile = appCtx.getDatabasePath(DB_NAME)
-            if (dbFile.exists()) {
-                val state = SQLCipherUtils.getDatabaseState(appCtx, DB_NAME)
-                if (state == SQLCipherUtils.State.UNENCRYPTED) {
-                    SQLCipherUtils.encryptTo(appCtx, dbFile, passphrase)
-                }
-            }
-
-            return Room.databaseBuilder(
-                appCtx,
+        private fun build(
+            context: Context,
+            factory: SupportSQLiteOpenHelperFactory?,
+        ): ArawnDatabase {
+            val builder = Room.databaseBuilder(
+                context.applicationContext,
                 ArawnDatabase::class.java,
                 DB_NAME,
-            )
-                .openHelperFactory(SupportFactory(passphrase))
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
-                .build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+
+            if (factory != null) builder.openHelperFactory(factory)
+
+            return builder.build()
         }
     }
 }
