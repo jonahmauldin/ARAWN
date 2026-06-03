@@ -29,6 +29,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -106,6 +110,7 @@ class MainActivity : ComponentActivity() {
                 // GPS track of the active session, projected for the offline map.
                 val mapCoords = remember { mutableStateListOf<CoordinatePair>() }
                 var viewMode by remember { mutableStateOf(ViewMode.CONSOLE) }
+                var currentScreen by remember { mutableStateOf(AppScreen.RECON) }
 
                 // Drain the service stream into the console while bound.
                 LaunchedEffect(service) {
@@ -139,19 +144,41 @@ class MainActivity : ComponentActivity() {
                     mapCoords.addAll(coords)
                 }
 
-                ScannerScreen(
-                    scanning = scanning,
-                    lines = lines,
-                    wifi = latestWifi,
-                    coordinates = mapCoords,
-                    viewMode = viewMode,
-                    onSelectView = { viewMode = it },
-                    onStart = { requestPermissionsThenStart() },
-                    onStop = { stopTracking() },
-                    onClear = { lines.clear() },
-                    onExport = { exportLatestSession() },
-                    onReport = { generateHtmlReport() },
-                )
+                Scaffold(
+                    containerColor = Color.Black,
+                    bottomBar = {
+                        ArawnBottomBar(
+                            currentScreen = currentScreen,
+                            onNavigate = { currentScreen = it },
+                        )
+                    },
+                ) { innerPadding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                    ) {
+                        when (currentScreen) {
+                            AppScreen.OPS      -> OpsScreen()
+                            AppScreen.RECON    -> ScannerScreen(
+                                scanning = scanning,
+                                lines = lines,
+                                wifi = latestWifi,
+                                coordinates = mapCoords,
+                                viewMode = viewMode,
+                                onSelectView = { viewMode = it },
+                                onStart = { requestPermissionsThenStart() },
+                                onStop = { stopTracking() },
+                                onClear = { lines.clear() },
+                                onExport = { exportLatestSession() },
+                                onReport = { generateHtmlReport() },
+                            )
+                            AppScreen.MISSIONS -> MissionsScreen()
+                            AppScreen.REPORTS  -> ReportsScreen()
+                            AppScreen.VAULT    -> VaultScreen()
+                        }
+                    }
+                }
             }
         }
     }
@@ -516,6 +543,45 @@ private fun ScannerScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ArawnBottomBar(
+    currentScreen: AppScreen,
+    onNavigate: (AppScreen) -> Unit,
+) {
+    NavigationBar(
+        containerColor = PanelBlack,
+        contentColor = Ink,
+    ) {
+        AppScreen.entries.forEach { screen ->
+            NavigationBarItem(
+                selected = currentScreen == screen,
+                onClick = { onNavigate(screen) },
+                icon = {
+                    Text(
+                        text = screen.icon,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                    )
+                },
+                label = {
+                    Text(
+                        text = screen.label,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Amber,
+                    selectedTextColor = Amber,
+                    unselectedIconColor = Color.Gray,
+                    unselectedTextColor = Color.Gray,
+                    indicatorColor = Color(0xFF161616),
+                ),
+            )
         }
     }
 }
