@@ -20,9 +20,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // SQLCipher for Android — Zetetic's official Maven server hosts 4.5.5+
-        // (4.5.4 and earlier are on Maven Central but lack SQLCipherUtils).
-        maven { url = uri("https://mvn.zetetic.net/artifactory/public") }
+        // net.zetetic:sqlcipher-android (4.5.5+) is on Maven Central — no extra repo needed.
     }
 }
 

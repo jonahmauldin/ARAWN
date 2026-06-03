@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.arawn.core.crypto.DbPassphraseManager
-import net.sqlcipher.database.SQLCipherUtils
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SQLCipherUtils
+import net.zetetic.database.sqlcipher.SupportFactory
 
 /**
  * Single local SQLite store for ARAWN — encrypted with SQLCipher (Phase E).

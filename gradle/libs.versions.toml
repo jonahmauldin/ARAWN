@@ -44,7 +44,7 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 
 osmdroid-android = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
 
-sqlcipher-android = { group = "net.zetetic", name = "android-database-sqlcipher", version.ref = "sqlcipher" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
 tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tink" }
 security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
