@@ -570,12 +570,14 @@ private fun MissionDetailContent(
 
     if (showArchiveConfirm) {
         ConfirmDialog(
-            message = "Archive \"${mission.name}\"?\nIt will be hidden from the active list.",
+            message = "Archive \"${mission?.name ?: ""}\"?\nIt will be hidden from the active list.",
             onConfirm = {
                 scope.launch {
-                    missionDao.updateMission(
-                        mission.copy(archived = true, updatedMs = System.currentTimeMillis())
-                    )
+                    mission?.let { m ->
+                        missionDao.updateMission(
+                            m.copy(archived = true, updatedMs = System.currentTimeMillis())
+                        )
+                    }
                     showArchiveConfirm = false
                     onBack()
                 }
