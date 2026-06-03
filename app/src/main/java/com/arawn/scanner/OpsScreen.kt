@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -91,12 +92,16 @@ fun OpsScreen(
             )
         }
 
-        // Map — fills the remaining space
+        // Map — fills the remaining space.
+        // clipToBounds is a second line of defence (belt-and-suspenders with the clip
+        // already on AndroidView inside OpsMapPanel) so the MapView cannot overdraw
+        // the header Row above or the footer Row below regardless of recomposition order.
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(PanelBlack),
+                .background(PanelBlack)
+                .clipToBounds(),
         ) {
             OpsMapPanel(
                 tracks = tracks,

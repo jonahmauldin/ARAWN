@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
@@ -103,7 +104,10 @@ fun OpsMapPanel(
 
     AndroidView(
         factory = { mapView },
-        modifier = modifier,
+        // clipToBounds creates a hardware graphics layer that prevents the MapView
+        // (an Android View) from painting outside its Compose-measured area — without
+        // it, osmdroid's canvas operations overdraw Compose siblings (header/footer).
+        modifier = modifier.clipToBounds(),
         update = { mv ->
             val totalPoints = tracks.sumOf { it.size }
 
