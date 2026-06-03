@@ -49,8 +49,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
@@ -413,6 +419,17 @@ class MainActivity : AppCompatActivity() {
 /** Which viewport the main pane is showing. */
 private enum class ViewMode { CONSOLE, SPECTRUM, MAP, HEATMAP }
 
+/**
+ * Consumes all nested-scroll and fling events produced by the osmdroid MapView
+ * before they can propagate up through the Compose gesture system. Without this,
+ * panning the map sends scroll velocity to the parent Column, visually shifting
+ * the layout and hiding the view-mode tabs.
+ */
+private val MapScrollBarrier = object : NestedScrollConnection {
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset = available
+    override suspend fun onPreFling(available: Velocity): Velocity = available
+}
+
 private val Amber = Color(0xFFE0B341)
 private val TerminalGreen = Color(0xFF35D07F)
 private val PanelBlack = Color(0xFF0A0A0A)
@@ -587,6 +604,11 @@ private fun ScannerScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            // Prevent osmdroid pan/fling events from propagating up
+                            // to the Compose Column and shifting the layout.
+                            .nestedScroll(MapScrollBarrier)
+                            // Clip map tile overflow so tabs above are never obscured.
+                            .clipToBounds()
                             .background(PanelBlack, RoundedCornerShape(6.dp)),
                     ) {
                         OfflineMapPanel(

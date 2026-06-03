@@ -17,12 +17,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +55,7 @@ private val Amber        = Color(0xFFE0B341)
 private val TerminalGreen = Color(0xFF35D07F)
 private val PanelBlack   = Color(0xFF0A0A0A)
 private val Ink          = Color(0xFFE6E6E6)
+private val DimRed       = Color(0xFFCC3B3B)
 
 private val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 private fun fmtMs(ms: Long): String = dateFmt.format(Date(ms))
@@ -326,7 +330,9 @@ private fun SessionSelectRow(
 
 @Composable
 private fun HistoryTab(context: Context, historyKey: Int) {
-    val reports = remember { mutableStateListOf<ReportFile>() }
+    val reports        = remember { mutableStateListOf<ReportFile>() }
+    var reportToDelete by remember { mutableStateOf<ReportFile?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(historyKey) {
         val found = withContext(Dispatchers.IO) { queryReports(context) }
@@ -353,14 +359,57 @@ private fun HistoryTab(context: Context, historyKey: Int) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(reports, key = { it.uri.toString() }) { report ->
-                ReportFileRow(report = report, onClick = { openReport(context, report.uri) })
+                ReportFileRow(
+                    report  = report,
+                    onClick = { openReport(context, report.uri) },
+                    onDelete = { reportToDelete = report },
+                )
             }
         }
+    }
+
+    // Delete confirm dialog
+    reportToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { reportToDelete = null },
+            containerColor   = PanelBlack,
+            title = {
+                Text("DELETE REPORT", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+            },
+            text = {
+                Text(
+                    "Permanently delete \"${target.name}\"?\n\nThis cannot be undone.",
+                    color      = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 12.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        val deleted = withContext(Dispatchers.IO) {
+                            runCatching {
+                                context.contentResolver.delete(target.uri, null, null) > 0
+                            }.getOrDefault(false)
+                        }
+                        if (deleted) reports.remove(target)
+                        reportToDelete = null
+                    }
+                }) {
+                    Text("DELETE", fontFamily = FontFamily.Monospace, color = DimRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { reportToDelete = null }) {
+                    Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+                }
+            },
+        )
     }
 }
 
 @Composable
-private fun ReportFileRow(report: ReportFile, onClick: () -> Unit) {
+private fun ReportFileRow(report: ReportFile, onClick: () -> Unit, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -389,6 +438,14 @@ private fun ReportFileRow(report: ReportFile, onClick: () -> Unit) {
             color = Amber,
             fontFamily = FontFamily.Monospace,
             fontSize = 14.sp,
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text     = "[×]",
+            color    = Color(0xFF3A1A1A),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            modifier = Modifier.clickable(onClick = onDelete),
         )
     }
 }
