@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
 
 /**
  * Single local SQLite store for ARAWN. 100% on-device — no network, no cloud.
@@ -14,17 +15,42 @@ import androidx.room.RoomDatabase
  */
 @Database(
     entities = [
+        // Recon hierarchy (untouched except SessionEntity gained missionId in v4)
         SessionEntity::class,
         LogEntryEntity::class,
         WifiApEntity::class,
         BleDeviceEntity::class,
+        // Platform spine (Phase B, DB version 4)
+        VaultEntryEntity::class,
+        MissionEntity::class,
+        MissionItemEntity::class,
+        WaypointEntity::class,
+        RouteEntity::class,
+        RoutePointEntity::class,
+        AreaOverlayEntity::class,
+        NoteEntity::class,
+        MediaAssetEntity::class,
+        ReportEntity::class,
+        ReportSessionEntity::class,
+        ReportRouteEntity::class,
+        DocumentEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true, // schema JSON written to core/schemas/ via room.schemaLocation KSP arg
 )
+@TypeConverters(SpineConverters::class)
 abstract class ArawnDatabase : RoomDatabase() {
 
+    // Recon
     abstract fun wirelessDao(): WirelessDao
+
+    // Platform spine
+    abstract fun missionDao(): MissionDao
+    abstract fun geoDao(): GeoDao
+    abstract fun attachmentDao(): AttachmentDao
+    abstract fun reportDao(): ReportDao
+    abstract fun documentDao(): DocumentDao
+    abstract fun vaultDao(): VaultDao
 
     companion object {
         private const val DB_NAME = "arawn.db"
@@ -43,7 +69,7 @@ abstract class ArawnDatabase : RoomDatabase() {
                 ArawnDatabase::class.java,
                 DB_NAME,
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

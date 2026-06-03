@@ -22,7 +22,10 @@ import androidx.room.Relation
  * remains the transport/UI model. Mappers.kt bridges the two.
  */
 
-@Entity(tableName = "sessions")
+@Entity(
+    tableName = "sessions",
+    indices = [Index("missionId")],
+)
 data class SessionEntity(
     @PrimaryKey(autoGenerate = true)
     val sessionId: Long = 0,
@@ -31,6 +34,9 @@ data class SessionEntity(
     val endTime: Long? = null,
     val pointsCollected: Int = 0,
     val totalDistanceM: Double = 0.0,
+    /** Optional link to a MissionEntity (soft reference — no DB-level FK due to SQLite
+     *  ALTER TABLE limitations; SET NULL behavior enforced in MissionRepository). */
+    val missionId: Long? = null,
 )
 
 @Entity(

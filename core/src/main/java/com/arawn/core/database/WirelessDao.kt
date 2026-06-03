@@ -110,4 +110,14 @@ abstract class WirelessDao {
     /** Most recently started session id, or null if no sessions exist yet. */
     @Query("SELECT sessionId FROM sessions ORDER BY startTime DESC LIMIT 1")
     abstract suspend fun getLatestSessionId(): Long?
+
+    // ---- Mission linking (Phase B) -------------------------------------------
+
+    /** Attach or detach a session from a mission (pass null to clear). */
+    @Query("UPDATE sessions SET missionId = :missionId WHERE sessionId = :sessionId")
+    abstract suspend fun tagSessionToMission(sessionId: Long, missionId: Long?)
+
+    /** Live list of sessions belonging to a mission, newest first. */
+    @Query("SELECT * FROM sessions WHERE missionId = :missionId ORDER BY startTime DESC")
+    abstract fun observeSessionsForMission(missionId: Long): Flow<List<SessionEntity>>
 }

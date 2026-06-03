@@ -109,6 +109,8 @@ class MainActivity : ComponentActivity() {
                 val latestWifi = remember { mutableStateListOf<WifiObservation>() }
                 // GPS track of the active session, projected for the offline map.
                 val mapCoords = remember { mutableStateListOf<CoordinatePair>() }
+                // Most recent GPS fix — shown as the live position marker on the OPS map.
+                var liveCoord by remember { mutableStateOf<CoordinatePair?>(null) }
                 var viewMode by remember { mutableStateOf(ViewMode.CONSOLE) }
                 var currentScreen by remember { mutableStateOf(AppScreen.RECON) }
 
@@ -122,6 +124,12 @@ class MainActivity : ComponentActivity() {
                         // Wi-Fi environment; the chart recomposes and re-animates.
                         latestWifi.clear()
                         latestWifi.addAll(packet.wifi)
+                        // Track live position for the OPS Center map.
+                        liveCoord = CoordinatePair(
+                            latitude    = packet.latitude,
+                            longitude   = packet.longitude,
+                            timestampMs = packet.timestampMs,
+                        )
                     }
                 }
 
@@ -159,7 +167,10 @@ class MainActivity : ComponentActivity() {
                             .padding(innerPadding),
                     ) {
                         when (currentScreen) {
-                            AppScreen.OPS      -> OpsScreen()
+                            AppScreen.OPS      -> OpsScreen(
+                                wirelessDao  = container.wirelessDao,
+                                livePosition = liveCoord,
+                            )
                             AppScreen.RECON    -> ScannerScreen(
                                 scanning = scanning,
                                 lines = lines,
