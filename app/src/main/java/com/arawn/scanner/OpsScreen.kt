@@ -383,25 +383,30 @@ fun OpsScreen(
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
 
-    // Place-pin dialog (after long press)
+    // Place-pin dialog (after long press).
+    // IMPORTANT: onConfirm receives lat/lon as stable parameters — do NOT read
+    // pendingPinLat/pendingPinLon inside scope.launch because those state vars
+    // are nulled out synchronously after launch() returns, before the coroutine
+    // body runs, causing a NPE on the !! operator.
     if (pendingPinLat != null && pendingPinLon != null) {
         PlacePinDialog(
-            lat      = pendingPinLat!!,
-            lon      = pendingPinLon!!,
-            onConfirm = { name, type ->
+            lat       = pendingPinLat!!,
+            lon       = pendingPinLon!!,
+            onConfirm = { name, type, pinLat, pinLon ->
                 scope.launch {
                     geoDao.insertWaypoint(
                         WaypointEntity(
                             missionId = null,
                             name      = name,
-                            latitude  = pendingPinLat!!,
-                            longitude = pendingPinLon!!,
+                            latitude  = pinLat,   // stable local copy
+                            longitude = pinLon,   // stable local copy
                             type      = type,
                             createdMs = System.currentTimeMillis(),
                         )
                     )
                 }
-                pendingPinLat = null; pendingPinLon = null
+                pendingPinLat = null
+                pendingPinLon = null
             },
             onDismiss = { pendingPinLat = null; pendingPinLon = null },
         )
@@ -510,7 +515,9 @@ private fun PlanWaypointRow(
 private fun PlacePinDialog(
     lat: Double,
     lon: Double,
-    onConfirm: (name: String, type: WaypointType) -> Unit,
+    // lat/lon are passed BACK through onConfirm so the caller receives stable
+    // local copies rather than reading from Compose state after a scope.launch.
+    onConfirm: (name: String, type: WaypointType, lat: Double, lon: Double) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val types  = WaypointType.entries
@@ -560,7 +567,7 @@ private fun PlacePinDialog(
         confirmButton = {
             TextButton(
                 enabled = name.isNotBlank(),
-                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), types[typeIdx]) },
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), types[typeIdx], lat, lon) },
             ) {
                 Text("DROP PIN", fontFamily = FontFamily.Monospace, color = TermGreen)
             }
