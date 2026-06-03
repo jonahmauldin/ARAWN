@@ -377,7 +377,7 @@ function buildAnalysis(){
   var dups=Object.entries(ssidC).filter(function(e){return e[1]>1;}).sort(function(a,b){return b[1]-a[1];});
   var chC={};wifi.forEach(function(w){if(w.channel)chC[w.channel]=(chC[w.channel]||0)+1;});
   var cong=Object.entries(chC).filter(function(e){return e[1]>3;});
-  var vC={};wifi.forEach(function(w){if(w.vendor&&w.vendor!=='Unknown'&&w.vendor!=='Unknown Vendor')vC[w.vendor]=(vC[w.vendor]||0)+1;});
+  var vC={};wifi.forEach(function(w){if(w.vendor&&w.vendor!=='Unknown'&&w.vendor!=='Unknown Vendor'&&w.vendor!=='Randomized (private)')vC[w.vendor]=(vC[w.vendor]||0)+1;});
   var topV=Object.entries(vC).sort(function(a,b){return b[1]-a[1];})[0];
   var allD=[].concat(wifi,ble);
   var classified=allD.filter(function(d){return d.cls&&d.cls!=='Unknown';});
@@ -413,7 +413,7 @@ function buildCharts(){
 
   drawHistogram('chart-rssi',wifi.map(function(w){return w.rssi;}));
 
-  var vM={};wifi.forEach(function(w){if(w.vendor&&w.vendor!=='Unknown'&&w.vendor!=='Unknown Vendor')vM[w.vendor]=(vM[w.vendor]||0)+1;});
+  var vM={};wifi.forEach(function(w){if(w.vendor&&w.vendor!=='Unknown'&&w.vendor!=='Unknown Vendor'&&w.vendor!=='Randomized (private)')vM[w.vendor]=(vM[w.vendor]||0)+1;});
   var vK=Object.keys(vM).sort(function(a,b){return vM[b]-vM[a];}).slice(0,8);
   drawBarH('chart-vendors',vK,vK.map(function(k){return vM[k];}), '#4fc3f7');
 

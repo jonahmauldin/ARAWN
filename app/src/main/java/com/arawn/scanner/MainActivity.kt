@@ -58,6 +58,8 @@ import android.widget.Toast
 import com.arawn.core.database.CoordinatePair
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
+import com.arawn.scanner.ui.HeatmapPanel
+import com.arawn.scanner.ui.HeatPoint
 import com.arawn.scanner.ui.OfflineMapPanel
 import com.arawn.scanner.vault.VaultScreen
 import kotlinx.coroutines.launch
@@ -115,10 +117,14 @@ class MainActivity : AppCompatActivity() {
                 val latestWifi = remember { mutableStateListOf<WifiObservation>() }
                 // GPS track of the active session, projected for the offline map.
                 val mapCoords = remember { mutableStateListOf<CoordinatePair>() }
+                // Live RSSI heat points for the heatmap tab (Phase G).
+                val heatPoints = remember { mutableStateListOf<HeatPoint>() }
                 // Most recent GPS fix — shown as the live position marker on the OPS map.
                 var liveCoord by remember { mutableStateOf<CoordinatePair?>(null) }
                 var viewMode by remember { mutableStateOf(ViewMode.CONSOLE) }
                 var currentScreen by remember { mutableStateOf(AppScreen.RECON) }
+                // Phase G: filter randomized/private MACs from console + spectrum.
+                var filterRandomized by remember { mutableStateOf(false) }
 
                 // Drain the service stream into the console while bound.
                 LaunchedEffect(service) {
@@ -136,6 +142,15 @@ class MainActivity : AppCompatActivity() {
                             longitude   = packet.longitude,
                             timestampMs = packet.timestampMs,
                         )
+                        // Accumulate one heat point per GPS fix (Phase G heatmap).
+                        val maxRssi = maxOf(
+                            packet.wifi.maxOfOrNull { it.rssiDbm } ?: Int.MIN_VALUE,
+                            packet.ble.maxOfOrNull  { it.rssiDbm } ?: Int.MIN_VALUE,
+                        )
+                        if (maxRssi > Int.MIN_VALUE) {
+                            heatPoints.add(HeatPoint(packet.latitude, packet.longitude, maxRssi))
+                            while (heatPoints.size > MAX_HEAT_POINTS) heatPoints.removeAt(0)
+                        }
                     }
                 }
 
@@ -178,17 +193,20 @@ class MainActivity : AppCompatActivity() {
                                 livePosition = liveCoord,
                             )
                             AppScreen.RECON    -> ScannerScreen(
-                                scanning = scanning,
-                                lines = lines,
-                                wifi = latestWifi,
-                                coordinates = mapCoords,
-                                viewMode = viewMode,
-                                onSelectView = { viewMode = it },
-                                onStart = { requestPermissionsThenStart() },
-                                onStop = { stopTracking() },
-                                onClear = { lines.clear() },
-                                onExport = { exportLatestSession() },
-                                onReport = { generateHtmlReport() },
+                                scanning        = scanning,
+                                lines           = lines,
+                                wifi            = latestWifi,
+                                coordinates     = mapCoords,
+                                heatPoints      = heatPoints,
+                                filterRandomized = filterRandomized,
+                                viewMode        = viewMode,
+                                onSelectView    = { viewMode = it },
+                                onToggleFilter  = { filterRandomized = !filterRandomized },
+                                onStart         = { requestPermissionsThenStart() },
+                                onStop          = { stopTracking() },
+                                onClear         = { lines.clear(); heatPoints.clear() },
+                                onExport        = { exportLatestSession() },
+                                onReport        = { generateHtmlReport() },
                             )
                             AppScreen.MISSIONS -> com.arawn.scanner.missions.MissionsScreen(
                                 missionDao  = container.missionDao,
@@ -380,6 +398,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val MAX_CONSOLE_LINES = 500
+        const val MAX_HEAT_POINTS   = 2000  // ~33 min at 1 fix/s
     }
 }
 
@@ -388,7 +407,7 @@ class MainActivity : AppCompatActivity() {
 // ---------------------------------------------------------------------------
 
 /** Which viewport the main pane is showing. */
-private enum class ViewMode { CONSOLE, SPECTRUM, MAP }
+private enum class ViewMode { CONSOLE, SPECTRUM, MAP, HEATMAP }
 
 private val Amber = Color(0xFFE0B341)
 private val TerminalGreen = Color(0xFF35D07F)
@@ -438,8 +457,11 @@ private fun ScannerScreen(
     lines: SnapshotStateList<String>,
     wifi: SnapshotStateList<WifiObservation>,
     coordinates: SnapshotStateList<CoordinatePair>,
+    heatPoints: List<HeatPoint>,
+    filterRandomized: Boolean,
     viewMode: ViewMode,
     onSelectView: (ViewMode) -> Unit,
+    onToggleFilter: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
@@ -461,6 +483,16 @@ private fun ScannerScreen(
                     fontSize = 16.sp,
                 )
                 Spacer(Modifier.weight(1f))
+                // Phase G: randomized-MAC filter toggle
+                Text(
+                    text = "[ RAND ]",
+                    color = if (filterRandomized) Color(0xFFCC3B3B) else Color(0xFF2A2A2A),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .clickable(onClick = onToggleFilter)
+                        .padding(horizontal = 6.dp),
+                )
                 Text(
                     text = if (scanning) "● LIVE" else "○ IDLE",
                     color = if (scanning) TerminalGreen else Color.Gray,
@@ -471,19 +503,22 @@ private fun ScannerScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // Low-profile three-way viewport selector.
+            // Four-way viewport selector (Phase G adds HEATMAP).
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 ViewTab("▤ CONSOLE", viewMode == ViewMode.CONSOLE, Modifier.weight(1f)) {
                     onSelectView(ViewMode.CONSOLE)
                 }
-                ViewTab("∿ SPECTRUM", viewMode == ViewMode.SPECTRUM, Modifier.weight(1f)) {
+                ViewTab("∿ SPEC", viewMode == ViewMode.SPECTRUM, Modifier.weight(1f)) {
                     onSelectView(ViewMode.SPECTRUM)
                 }
                 ViewTab("⌖ MAP", viewMode == ViewMode.MAP, Modifier.weight(1f)) {
                     onSelectView(ViewMode.MAP)
+                }
+                ViewTab("⊕ HEAT", viewMode == ViewMode.HEATMAP, Modifier.weight(1f)) {
+                    onSelectView(ViewMode.HEATMAP)
                 }
             }
 
@@ -513,8 +548,13 @@ private fun ScannerScreen(
                                 fontSize = 12.sp,
                             )
                         }
+                        // Phase G: filter lines containing randomized MACs when toggle is on
+                        val visibleLines = if (filterRandomized)
+                            lines.filter { "Randomized (private)" !in it }
+                        else
+                            lines
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                            items(lines) { line ->
+                            items(visibleLines) { line ->
                                 Text(
                                     text = line,
                                     color = TerminalGreen,
@@ -527,8 +567,13 @@ private fun ScannerScreen(
                 }
 
                 ViewMode.SPECTRUM -> {
+                    // Phase G: strip randomized-MAC APs from the chart when filter is on
+                    val visibleWifi = if (filterRandomized)
+                        wifi.filter { it.vendorName != "Randomized (private)" }
+                    else
+                        wifi
                     FrequencyCurveChart(
-                        observations = wifi,
+                        observations = visibleWifi,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
                 }
@@ -555,6 +600,15 @@ private fun ScannerScreen(
                             )
                         }
                     }
+                }
+
+                ViewMode.HEATMAP -> {
+                    HeatmapPanel(
+                        points   = heatPoints,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    )
                 }
             }
 
