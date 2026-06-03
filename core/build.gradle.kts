@@ -49,4 +49,8 @@ dependencies {
     // EncryptedSharedPreferences — Keystore-backed storage for the DB
     // passphrase and other sensitive key material (Phase E).
     implementation(libs.security.crypto)
+
+    // SQLCipher — AES-256 whole-database encryption (Phase I / E.1).
+    // Package stays net.sqlcipher.database despite the artifact rename at 4.5.5+.
+    implementation(libs.sqlcipher.android)
 }

@@ -5,6 +5,9 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.arawn.core.crypto.DbPassphraseManager
+import net.sqlcipher.database.SQLCipherUtils
+import net.sqlcipher.database.SupportFactory
 
 /**
  * Single local SQLite store for ARAWN. 100% on-device — no network, no cloud.
@@ -13,10 +16,10 @@ import androidx.room.TypeConverters
  * instance is ever built, and it is anchored to the application context to
  * avoid leaking an Activity/Service.
  *
- * Phase E note: SQLCipher whole-database encryption is deferred (dependency
- * resolution issues with net.zetetic:sqlcipher-android on Maven Central).
- * Per-file Tink AEAD encryption for Vault entries is active. SQLCipher will
- * be added as a follow-up once the correct artifact coordinates are confirmed.
+ * The database is encrypted with SQLCipher (AES-256-CBC). A random 32-byte
+ * passphrase is generated once and stored in EncryptedSharedPreferences backed
+ * by the Android Keystore. On first launch after Phase I, any existing
+ * plaintext database is migrated in-place before Room opens it.
  */
 @Database(
     entities = [
@@ -68,13 +71,30 @@ abstract class ArawnDatabase : RoomDatabase() {
                 INSTANCE ?: build(context).also { INSTANCE = it }
             }
 
-        private fun build(context: Context): ArawnDatabase =
-            Room.databaseBuilder(
-                context.applicationContext,
+        private fun build(context: Context): ArawnDatabase {
+            val appCtx = context.applicationContext
+            val passphrase = DbPassphraseManager.getOrCreate(appCtx)
+
+            // One-time migration: if an unencrypted DB exists (pre-Phase-I install),
+            // encrypt it in-place before Room opens it. SQLCipherUtils opens the
+            // plaintext file, checkpoints any WAL, exports all pages into a temp
+            // encrypted file, then renames it over the original.
+            val dbFile = appCtx.getDatabasePath(DB_NAME)
+            if (dbFile.exists()) {
+                val state = SQLCipherUtils.getDatabaseState(appCtx, DB_NAME)
+                if (state == SQLCipherUtils.State.UNENCRYPTED) {
+                    SQLCipherUtils.encryptTo(appCtx, dbFile, passphrase)
+                }
+            }
+
+            return Room.databaseBuilder(
+                appCtx,
                 ArawnDatabase::class.java,
                 DB_NAME,
             )
+                .openHelperFactory(SupportFactory(passphrase))
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
+        }
     }
 }
