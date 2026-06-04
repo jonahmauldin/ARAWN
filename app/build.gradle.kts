@@ -36,8 +36,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 28
-        versionName = "1.3.0-phaseI"
+        versionCode = 29
+        versionName = "1.3.1-phaseI"
     }
 
     signingConfigs {
@@ -126,9 +126,11 @@ dependencies {
     implementation(libs.androidx.biometric)
 
     // Phase I / E.1: SQLCipher whole-database AES-256 encryption.
-    // Declared in :app (not :core) — AGP android-library modules can't resolve
-    // the AAR's classes.jar from their Kotlin compile classpath on AGP 8.7.3.
-    // Package: net.sqlcipher.database (unchanged after the 4.5.5 artifact rename).
+    // Declared in :app (not :core) so the @Database class in :core never names a
+    // SQLCipher / androidx.sqlite factory type — Room's KSP can't resolve those
+    // AAR types from :core (that is what broke the first attempt). :app builds the
+    // SupportOpenHelperFactory and installs it via the ArawnDatabase.get { } lambda.
+    // Package is net.zetetic.database.sqlcipher in this (renamed, 4.5.5+) artifact.
     implementation("net.zetetic:sqlcipher-android:4.6.1") {
         exclude(group = "com.android.support", module = "support-v4")
     }
