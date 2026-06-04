@@ -74,6 +74,7 @@ private fun VaultEntryKind.icon() = when (this) {
 fun VaultScreen(
     isUnlocked: Boolean,
     onAuthenticate: () -> Unit,
+    onWillPickFile: () -> Unit,
     vaultRepository: VaultRepository,
     vaultDao: VaultDao,
 ) {
@@ -81,6 +82,7 @@ fun VaultScreen(
         VaultLockedScreen(onAuthenticate = onAuthenticate)
     } else {
         VaultUnlockedScreen(
+            onWillPickFile  = onWillPickFile,
             vaultRepository = vaultRepository,
             vaultDao        = vaultDao,
         )
@@ -142,6 +144,7 @@ private fun VaultLockedScreen(onAuthenticate: () -> Unit) {
 
 @Composable
 private fun VaultUnlockedScreen(
+    onWillPickFile: () -> Unit,
     vaultRepository: VaultRepository,
     vaultDao: VaultDao,
 ) {
@@ -239,7 +242,7 @@ private fun VaultUnlockedScreen(
         }
 
         Button(
-            onClick = { importError = null; importLauncher.launch("*/*") },
+            onClick = { importError = null; onWillPickFile(); importLauncher.launch("*/*") },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),

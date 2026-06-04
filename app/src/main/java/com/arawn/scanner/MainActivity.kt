@@ -88,6 +88,15 @@ class MainActivity : AppCompatActivity() {
     /** True while the Vault screen is unlocked. Cleared on app background or tab change. */
     private var isVaultUnlocked by mutableStateOf(false)
 
+    /**
+     * Set just before the Vault launches the system file picker. The picker is a
+     * separate Activity, so launching it sends us through onStop — which would
+     * otherwise auto-lock the vault, tear down the unlocked screen (cancelling the
+     * import coroutine), and drop the picked file. This one-shot flag tells onStop
+     * to skip the auto-lock for that round-trip.
+     */
+    private var suppressVaultAutoLock = false
+
     /** True once bindService() has been called and not yet unbound. */
     private var bindRequested = false
 
@@ -230,6 +239,7 @@ class MainActivity : AppCompatActivity() {
                             AppScreen.VAULT    -> VaultScreen(
                                 isUnlocked      = isVaultUnlocked,
                                 onAuthenticate  = { authenticateVault() },
+                                onWillPickFile  = { suppressVaultAutoLock = true },
                                 vaultRepository = container.vaultRepository,
                                 vaultDao        = container.vaultDao,
                             )
@@ -254,7 +264,22 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         doUnbind()
-        isVaultUnlocked = false  // auto-lock when app goes to background
+        // Auto-lock on genuine background — but NOT when we launched the file
+        // picker ourselves (a separate Activity that also triggers onStop).
+        // Skipping the lock there keeps the unlocked Vault screen composed so the
+        // picked file's import coroutine survives and completes.
+        if (suppressVaultAutoLock) {
+            suppressVaultAutoLock = false
+        } else {
+            isVaultUnlocked = false
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Defensive: never let the one-shot suppress flag linger past a resume
+        // (e.g. if a picker were dismissed without ever stopping the activity).
+        suppressVaultAutoLock = false
     }
 
     private fun doBind() {
