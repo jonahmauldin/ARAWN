@@ -428,7 +428,11 @@ private fun MissionDetailContent(
             item {
                 SectionHeader("// OBJECTIVES & TASKS  (${missionItems.size})")
             }
-            items(missionItems, key = { it.itemId }) { item ->
+            // Keys are namespaced per section: itemId / waypointId / sessionId are
+            // independent autoincrement sequences that overlap (all start at 1), and
+            // LazyColumn requires keys unique across the WHOLE list — colliding raw
+            // Long keys throw "Key N was already used" and crash the screen.
+            items(missionItems, key = { "item-${it.itemId}" }) { item ->
                 ItemRow(
                     item = item,
                     onToggle = {
@@ -448,7 +452,7 @@ private fun MissionDetailContent(
             item {
                 SectionHeader("// WAYPOINTS  (${waypoints.size})")
             }
-            items(waypoints, key = { it.waypointId }) { wp ->
+            items(waypoints, key = { "wpt-${it.waypointId}" }) { wp ->
                 WaypointRow(waypoint = wp, onDelete = { waypointToDelete = wp })
             }
             item {
@@ -460,7 +464,7 @@ private fun MissionDetailContent(
             item {
                 SectionHeader("// LINKED RECON SESSIONS  (${linkedSessions.size})")
             }
-            items(linkedSessions, key = { it.sessionId }) { session ->
+            items(linkedSessions, key = { "sess-${it.sessionId}" }) { session ->
                 SessionRow(session = session, onUntag = { sessionToUntag = session })
             }
             item {
