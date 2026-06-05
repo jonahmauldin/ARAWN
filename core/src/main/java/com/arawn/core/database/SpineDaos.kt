@@ -129,6 +129,10 @@ interface GeoDao {
 
     @Query("SELECT * FROM area_overlays WHERE missionId = :missionId")
     fun observeAreasForMission(missionId: Long): Flow<List<AreaOverlayEntity>>
+
+    /** All zones/areas regardless of mission — used by the Ops map overlay + object manager. */
+    @Query("SELECT * FROM area_overlays ORDER BY createdMs DESC")
+    fun observeAllAreas(): Flow<List<AreaOverlayEntity>>
 }
 
 // ---------------------------------------------------------------------------

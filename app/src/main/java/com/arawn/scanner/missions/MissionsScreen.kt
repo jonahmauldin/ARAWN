@@ -467,9 +467,12 @@ private fun MissionDetailContent(
             modifier = Modifier.fillMaxWidth().height(320.dp).clipToBounds(),
         ) {
             TacticalMapPanel(
+                // Fresh List instances per emission so the AndroidView update block
+                // re-runs and newly drawn routes/zones appear without a layer toggle
+                // (mappableWaypoints is already a fresh .filter list). See OpsScreen.
                 waypoints       = mappableWaypoints,
-                routes          = routes,
-                areas           = areas,
+                routes          = routes.toList(),
+                areas           = areas.toList(),
                 livePosition    = livePosition,
                 tool            = mapTool,
                 drawPoints      = drawPoints,

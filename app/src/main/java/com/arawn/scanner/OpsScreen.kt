@@ -1,6 +1,7 @@
 package com.arawn.scanner
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.arawn.core.database.AreaOverlayEntity
 import com.arawn.core.database.CoordinatePair
 import com.arawn.core.database.GeoDao
 import com.arawn.core.database.MissionDao
@@ -56,6 +59,7 @@ import com.arawn.scanner.map.MapTool
 import com.arawn.scanner.map.SessionTrack
 import com.arawn.scanner.map.TacticalMapPanel
 import com.arawn.scanner.map.cleanTrack
+import com.arawn.scanner.map.polygonToGeoJson
 import com.arawn.scanner.tilePacks.TilePackPanel
 import com.arawn.scanner.tilePacks.loadActivePack
 import kotlinx.coroutines.launch
@@ -84,17 +88,24 @@ private val fieldColors
 
 private val monoStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
 
-private enum class OpsView { MAP, PLAN, PACKS }
+private enum class OpsView { MAP, OBJECTS, PLAN, PACKS }
 
 /**
  * Operations Center — map view, mission planner, and tile-pack manager.
  *
  * ### MAP view
- * Shows all session GPS tracks, waypoint pins, and planned routes on a live
- * osmdroid map. Layer toggles control what's visible. Long-pressing the map
- * drops a new global waypoint at the press point — the "Place Pin" dialog
+ * Shows all session GPS tracks, waypoint pins, planned routes, and zone overlays
+ * on a live osmdroid map. Layer toggles control what's visible. Long-pressing the
+ * map drops a new global waypoint at the press point — the "Place Pin" dialog
  * pre-fills the coordinates so the operator only needs to name it and pick a
- * type. Tapping an existing waypoint opens an edit/delete sheet.
+ * type. Tapping an existing waypoint/route/zone opens an edit/delete sheet. The
+ * ✎ ROUTE and ▭ ZONE tools draw new geometry directly on the map.
+ *
+ * ### OBJECTS view
+ * A single management list of every map object (waypoints, routes, zones) across
+ * all missions and the global layer. Each row shows what mission (if any) it is
+ * linked to and opens the same edit/rename/delete sheet as tapping it on the map —
+ * so a route or zone can always be deleted without hunting for its thin line.
  *
  * ### PLAN view
  * Lists every global waypoint (those not yet assigned to a mission) with
@@ -125,6 +136,7 @@ fun OpsScreen(
     val tracks    = remember { mutableStateListOf<SessionTrack>() }
     val waypoints = remember { mutableStateListOf<WaypointEntity>() }
     val routes    = remember { mutableStateListOf<RouteWithPoints>() }
+    val areas     = remember { mutableStateListOf<AreaOverlayEntity>() }
 
     LaunchedEffect(Unit) {
         wirelessDao.observeSessions().collect { sessions ->
@@ -147,6 +159,11 @@ fun OpsScreen(
             routes.clear(); routes.addAll(list)
         }
     }
+    LaunchedEffect(Unit) {
+        geoDao.observeAllAreas().collect { list ->
+            areas.clear(); areas.addAll(list)
+        }
+    }
 
     // ── Tile packs ────────────────────────────────────────────────────────────
     var activePackFile by remember { mutableStateOf<File?>(loadActivePack(context)) }
@@ -155,17 +172,20 @@ fun OpsScreen(
     var showTracks    by remember { mutableStateOf(true) }
     var showWaypoints by remember { mutableStateOf(true) }
     var showRoutes    by remember { mutableStateOf(true) }
+    var showAreas     by remember { mutableStateOf(true) }
 
     // ── Map interaction state ─────────────────────────────────────────────────
     var pendingPinLat   by remember { mutableStateOf<Double?>(null) }
     var pendingPinLon   by remember { mutableStateOf<Double?>(null) }
     var editingWaypoint by remember { mutableStateOf<WaypointEntity?>(null) }
 
-    // ── Route-drawing state ───────────────────────────────────────────────────
+    // ── Route/zone-drawing state ──────────────────────────────────────────────
     var mapTool             by remember { mutableStateOf(MapTool.NONE) }
     val drawPoints          = remember { mutableStateListOf<GeoPoint>() }
     var showSaveRouteDialog by remember { mutableStateOf(false) }
+    var showSaveAreaDialog  by remember { mutableStateOf(false) }
     var editingRoute        by remember { mutableStateOf<RouteEntity?>(null) }
+    var editingArea         by remember { mutableStateOf<AreaOverlayEntity?>(null) }
 
     // ── PLAN mode state ───────────────────────────────────────────────────────
     var selectedForMission    by remember { mutableStateOf(emptySet<Long>()) }
@@ -224,15 +244,18 @@ fun OpsScreen(
 
             // ── MAP ──────────────────────────────────────────────────────────
             OpsView.MAP -> {
-                if (mapTool == MapTool.ROUTE) {
-                    // Route-drawing toolbar (replaces the layer row while drawing).
+                val drawing = mapTool == MapTool.ROUTE || mapTool == MapTool.AREA
+                if (drawing) {
+                    // Geometry-drawing toolbar (replaces the layer row while drawing).
+                    val isArea = mapTool == MapTool.AREA
+                    val minPts = if (isArea) 3 else 2
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text       = "✎ ROUTE · ${drawPoints.size} pts",
+                            text       = (if (isArea) "▭ ZONE" else "✎ ROUTE") + " · ${drawPoints.size} pts",
                             color      = Amber,
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 11.sp,
@@ -242,26 +265,32 @@ fun OpsScreen(
                             if (drawPoints.isNotEmpty()) drawPoints.removeAt(drawPoints.lastIndex)
                         }
                         ToolAction("CLEAR", enabled = drawPoints.isNotEmpty()) { drawPoints.clear() }
-                        ToolAction("SAVE", enabled = drawPoints.size >= 2, color = TermGreen) {
-                            if (drawPoints.size >= 2) showSaveRouteDialog = true
+                        ToolAction("SAVE", enabled = drawPoints.size >= minPts, color = TermGreen) {
+                            if (drawPoints.size >= minPts) {
+                                if (isArea) showSaveAreaDialog = true else showSaveRouteDialog = true
+                            }
                         }
                         ToolAction("CANCEL", color = DimRed) {
                             drawPoints.clear(); mapTool = MapTool.NONE
                         }
                     }
                 } else {
-                    // Layer toggle row + draw entry point.
+                    // Layer toggle row + draw entry points.
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        LayerChip("TRACKS",    showTracks)    { showTracks    = !showTracks }
-                        LayerChip("WPT",       showWaypoints) { showWaypoints = !showWaypoints }
-                        LayerChip("ROUTES",    showRoutes)    { showRoutes    = !showRoutes }
+                        LayerChip("TRACKS", showTracks)    { showTracks    = !showTracks }
+                        LayerChip("WPT",    showWaypoints) { showWaypoints = !showWaypoints }
+                        LayerChip("ROUTES", showRoutes)    { showRoutes    = !showRoutes }
+                        LayerChip("ZONES",  showAreas)     { showAreas     = !showAreas }
                         Spacer(Modifier.weight(1f))
-                        ToolAction("✎ DRAW ROUTE", color = Amber) {
+                        ToolAction("✎ ROUTE", color = Amber) {
                             drawPoints.clear(); mapTool = MapTool.ROUTE
+                        }
+                        ToolAction("▭ ZONE", color = Amber) {
+                            drawPoints.clear(); mapTool = MapTool.AREA
                         }
                     }
                 }
@@ -269,15 +298,24 @@ fun OpsScreen(
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth().background(PanelBlack).clipToBounds(),
                 ) {
+                    // Immutable snapshots: passing fresh List instances on each data
+                    // emission changes the parameter identity, which forces the
+                    // AndroidView update block to re-run so newly added waypoints /
+                    // routes / zones appear immediately (the panel's per-layer hash
+                    // gates still prevent redundant overlay rebuilds). Without this,
+                    // Compose memoizes the update lambda on the stable SnapshotStateList
+                    // reference and the map only refreshes when a layer is toggled.
                     TacticalMapPanel(
-                        tracks         = tracks,
+                        tracks         = tracks.toList(),
                         livePosition   = livePosition,
-                        waypoints      = waypoints,
-                        routes         = routes,
+                        waypoints      = waypoints.toList(),
+                        routes         = routes.toList(),
+                        areas          = areas.toList(),
                         activePackFile = activePackFile,
                         showTracks     = showTracks,
                         showWaypoints  = showWaypoints,
                         showRoutes     = showRoutes,
+                        showAreas      = showAreas,
                         tool           = mapTool,
                         drawPoints     = drawPoints,
                         onMapTap       = { gp -> drawPoints.add(gp) },
@@ -286,13 +324,16 @@ fun OpsScreen(
                         } else null,
                         onWaypointTap  = { wp -> editingWaypoint = wp },
                         onRouteTap     = { route -> editingRoute = route },
+                        onAreaTap      = { area -> editingArea = area },
                         modifier       = Modifier.fillMaxSize(),
                     )
 
-                    if (tracks.isEmpty() && waypoints.isEmpty() && routes.isEmpty() && livePosition == null) {
+                    if (tracks.isEmpty() && waypoints.isEmpty() && routes.isEmpty() &&
+                        areas.isEmpty() && livePosition == null
+                    ) {
                         Text(
                             text       = "// long press map to drop a pin\n" +
-                                "// ✎ DRAW ROUTE to plan a path\n" +
+                                "// ✎ ROUTE / ▭ ZONE to plan geometry\n" +
                                 "// start RECON to build GPS tracks",
                             color      = Color(0xFF3A3A3A),
                             fontFamily = FontFamily.Monospace,
@@ -301,9 +342,10 @@ fun OpsScreen(
                         )
                     }
 
-                    if (mapTool == MapTool.ROUTE) {
+                    if (drawing) {
                         Text(
-                            text       = "tap map to add route points",
+                            text       = if (mapTool == MapTool.AREA) "tap map to add zone corners"
+                                         else "tap map to add route points",
                             color      = Color(0xFF777777),
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 10.sp,
@@ -319,7 +361,7 @@ fun OpsScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
                     Text(
-                        text       = "tracks: ${tracks.size}  ·  pins: ${waypoints.count { it.missionId == null }}  ·  routes: ${routes.size}",
+                        text       = "tracks: ${tracks.size}  ·  pins: ${waypoints.size}  ·  routes: ${routes.size}  ·  zones: ${areas.size}",
                         color      = Color.Gray,
                         fontFamily = FontFamily.Monospace,
                         fontSize   = 11.sp,
@@ -334,6 +376,91 @@ fun OpsScreen(
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 11.sp,
                         )
+                    }
+                }
+            }
+
+            // ── OBJECTS ──────────────────────────────────────────────────────
+            OpsView.OBJECTS -> {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text       = "ALL MAP OBJECTS",
+                            color      = Color(0xFF555555),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize   = 11.sp,
+                            modifier   = Modifier.weight(1f),
+                        )
+                        Text(
+                            text       = "${waypoints.size + routes.size + areas.size} total",
+                            color      = Color.Gray,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize   = 11.sp,
+                        )
+                    }
+
+                    if (waypoints.isEmpty() && routes.isEmpty() && areas.isEmpty()) {
+                        Box(
+                            modifier         = Modifier.weight(1f).fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text       = "// no map objects yet\n" +
+                                    "// drop pins or draw routes / zones on the MAP",
+                                color      = Color(0xFF3A3A3A),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize   = 12.sp,
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier            = Modifier.weight(1f).fillMaxWidth(),
+                            contentPadding      = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            if (waypoints.isNotEmpty()) {
+                                item("h-wpt") { ObjectSectionHeader("// WAYPOINTS  (${waypoints.size})") }
+                                items(waypoints, key = { "wpt-${it.waypointId}" }) { wp ->
+                                    MapObjectRow(
+                                        glyph    = "◆",
+                                        name     = wp.name,
+                                        sublabel = "${wp.type.name}  " +
+                                            if (wp.hasLocation())
+                                                "%.5f, %.5f".format(Locale.US, wp.latitude, wp.longitude)
+                                            else "PENDING LOCATION",
+                                        linked   = wp.missionId != null,
+                                        onClick  = { editingWaypoint = wp },
+                                    )
+                                }
+                            }
+                            if (routes.isNotEmpty()) {
+                                item("h-rte") { ObjectSectionHeader("// ROUTES  (${routes.size})") }
+                                items(routes, key = { "rte-${it.route.routeId}" }) { rw ->
+                                    MapObjectRow(
+                                        glyph    = "⟿",
+                                        name     = rw.route.name,
+                                        sublabel = "${rw.points.size} pts  ·  ${rw.route.type.name}",
+                                        linked   = rw.route.missionId != null,
+                                        onClick  = { editingRoute = rw.route },
+                                    )
+                                }
+                            }
+                            if (areas.isNotEmpty()) {
+                                item("h-area") { ObjectSectionHeader("// ZONES  (${areas.size})") }
+                                items(areas, key = { "area-${it.areaId}" }) { area ->
+                                    MapObjectRow(
+                                        glyph    = "▭",
+                                        name     = area.name,
+                                        sublabel = "zone overlay",
+                                        linked   = area.missionId != null,
+                                        onClick  = { editingArea = area },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -547,7 +674,7 @@ fun OpsScreen(
         )
     }
 
-    // Edit/delete route sheet (after tapping a route polyline)
+    // Edit/delete route sheet (after tapping a route polyline or OBJECTS row)
     editingRoute?.let { route ->
         EditRouteDialog(
             route     = route,
@@ -560,6 +687,49 @@ fun OpsScreen(
                 editingRoute = null
             },
             onDismiss = { editingRoute = null },
+        )
+    }
+
+    // Save-zone dialog (after drawing ≥3 points and tapping SAVE)
+    if (showSaveAreaDialog) {
+        SaveAreaDialog(
+            vertexCount = drawPoints.size,
+            onConfirm   = { name, strokeColor ->
+                val pts = drawPoints.toList() // stable copy before state is cleared
+                val fill = (0x33 shl 24) or (strokeColor and 0x00FFFFFF)
+                scope.launch {
+                    geoDao.insertArea(
+                        AreaOverlayEntity(
+                            missionId   = null,
+                            name        = name,
+                            geoJson     = polygonToGeoJson(pts),
+                            fillColor   = fill,
+                            strokeColor = strokeColor,
+                            createdMs   = System.currentTimeMillis(),
+                        )
+                    )
+                }
+                drawPoints.clear()
+                mapTool = MapTool.NONE
+                showSaveAreaDialog = false
+            },
+            onDismiss = { showSaveAreaDialog = false },
+        )
+    }
+
+    // Edit/delete zone sheet (after tapping a zone polygon or OBJECTS row)
+    editingArea?.let { area ->
+        EditAreaDialog(
+            area      = area,
+            onUpdate  = { updated ->
+                scope.launch { geoDao.updateArea(updated) }
+                editingArea = null
+            },
+            onDelete  = {
+                scope.launch { geoDao.deleteArea(area) }
+                editingArea = null
+            },
+            onDismiss = { editingArea = null },
         )
     }
 }
@@ -627,6 +797,53 @@ private fun PlanWaypointRow(
                 fontSize   = 10.sp,
             )
         }
+    }
+}
+
+@Composable
+private fun ObjectSectionHeader(text: String) {
+    Text(
+        text       = text,
+        color      = Color(0xFF444444),
+        fontFamily = FontFamily.Monospace,
+        fontSize   = 11.sp,
+        modifier   = Modifier.padding(top = 6.dp, bottom = 2.dp),
+    )
+}
+
+/** One management row in the OBJECTS view. Tapping opens the matching edit/delete
+ *  sheet (the same one a map tap opens), so any object can be renamed or deleted
+ *  without precisely tapping its geometry on the map. */
+@Composable
+private fun MapObjectRow(
+    glyph: String,
+    name: String,
+    sublabel: String,
+    linked: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PanelBlack, RoundedCornerShape(5.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(glyph, color = Amber, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            Text(sublabel, color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+        }
+        Text(
+            text       = if (linked) "● mission" else "global",
+            color      = if (linked) TermGreen else Color(0xFF444444),
+            fontFamily = FontFamily.Monospace,
+            fontSize   = 10.sp,
+        )
+        Spacer(Modifier.width(10.dp))
+        Text("EDIT", color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
     }
 }
 
@@ -959,6 +1176,148 @@ private fun EditRouteDialog(
                     TextButton(
                         enabled = name.isNotBlank(),
                         onClick = { onUpdate(route.copy(name = name.trim())) },
+                    ) {
+                        Text("SAVE", fontFamily = FontFamily.Monospace, color = TermGreen)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (confirmDelete) confirmDelete = false else onDismiss() }) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+// Zone fill is rendered at ~20% alpha over the chosen stroke color (see save handler).
+private val AREA_COLORS = listOf(
+    0xFFCC3B3B.toInt(), 0xFFE0B341.toInt(), 0xFF35D07F.toInt(),
+    0xFF4FA3D8.toInt(), 0xFF9B59B6.toInt(), 0xFF00CFCF.toInt(),
+)
+
+@Composable
+private fun SaveAreaDialog(
+    vertexCount: Int,
+    onConfirm: (name: String, colorInt: Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name     by remember { mutableStateOf("") }
+    var colorIdx by remember { mutableStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PanelBlack,
+        title = {
+            Text("SAVE ZONE", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text       = "$vertexCount vertices in this zone.",
+                    color      = Color(0xFF555555),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 11.sp,
+                )
+                OutlinedTextField(
+                    value         = name,
+                    onValueChange = { name = it },
+                    label         = { Text("Zone name", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth(),
+                    colors        = fieldColors,
+                    textStyle     = monoStyle,
+                )
+                Text("COLOR", color = Color(0xFF666666), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AREA_COLORS.forEachIndexed { i, c ->
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .background(Color(c), RoundedCornerShape(4.dp))
+                                .then(
+                                    if (i == colorIdx)
+                                        Modifier.border(2.dp, Ink, RoundedCornerShape(4.dp))
+                                    else Modifier
+                                )
+                                .clickable { colorIdx = i },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), AREA_COLORS[colorIdx]) },
+            ) {
+                Text("SAVE", fontFamily = FontFamily.Monospace, color = TermGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun EditAreaDialog(
+    area: AreaOverlayEntity,
+    onUpdate: (AreaOverlayEntity) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name          by remember(area.areaId) { mutableStateOf(area.name) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PanelBlack,
+        title = {
+            Text("EDIT ZONE", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value         = name,
+                    onValueChange = { name = it },
+                    label         = { Text("Name", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth(),
+                    colors        = fieldColors,
+                    textStyle     = monoStyle,
+                )
+                Text(
+                    text       = "zone overlay",
+                    color      = Color(0xFF555555),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 10.sp,
+                )
+                if (confirmDelete) {
+                    Text(
+                        "Permanently delete this zone?",
+                        color      = DimRed,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize   = 11.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (confirmDelete) {
+                    TextButton(onClick = onDelete) {
+                        Text("CONFIRM DELETE", fontFamily = FontFamily.Monospace, color = DimRed)
+                    }
+                } else {
+                    TextButton(onClick = { confirmDelete = true }) {
+                        Text("[×] DELETE", fontFamily = FontFamily.Monospace, color = Color(0xFF3A1A1A))
+                    }
+                    TextButton(
+                        enabled = name.isNotBlank(),
+                        onClick = { onUpdate(area.copy(name = name.trim())) },
                     ) {
                         Text("SAVE", fontFamily = FontFamily.Monospace, color = TermGreen)
                     }

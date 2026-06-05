@@ -352,3 +352,27 @@ Locked for review:
 - [x] Development roadmap (§11) — simplified
 
 **Non-negotiable before Phase A touches data:** (1) remove `fallbackToDestructiveMigration` + add real migrations; (2) add a stable CI signing key; (3) perform the recon module-extraction as an isolated, CI-gated commit.
+
+---
+
+## 15. Workflow / UX Improvement Pass (post-1.0, started 2026-06-05)
+
+Roadmap A–H is complete and shipped. This pass improves **data flow, lifecycle management, and usability** across the Planning, Mission, and Reports modules **without changing the design language or removing features**. It is strictly additive and follows the audit recorded in the session memory.
+
+### 15.1 Decisions (operator-confirmed 2026-06-05)
+- **Reports storage = DB index + files stay in MediaStore.** Reports remain plaintext HTML in `Documents/ARAWN/` (directly browser-openable). A report DB record stores searchable metadata (subtitle, category, tags) and points at the MediaStore file. This deviates from the §5 "VaultEntry = single source of truth for all blobs" rule **for reports only** — accepted because reports already lived outside the vault and operator-openability outweighs at-rest encryption for this artifact. `ReportEntity.vaultEntryId` becomes nullable in the v4→v5 migration.
+- **Mission delete = ask each time.** The delete dialog offers *Detach objects (keep as global)* vs *Delete mission and all its objects*. Hard delete goes through a thin `MissionRepository` so the polymorphic notes/media cascade (no DB FK) stays correct.
+- **Phasing.** Implement in order, pausing for CI + review between phases: **(1)** Planning usability → **(2)** Mission lifecycle → **(3)** Planning↔Mission association → **(4)** Report metadata & search.
+
+### 15.2 Audit findings (the "why")
+The DB spine already models nearly everything requested; the gaps were almost entirely **dormant capability + missing UI**, not missing schema:
+- `MissionDao.deleteMission`, `ReportDao.insertReportWithSources`/`observeReports`, `AttachmentDao` (notes/media), `RouteType.RECORDED`, `appendTrackPoint`, `getMissionGeo` were all defined but **never called**.
+- Archived missions had **no query** (`observeActiveMissions` filters `archived=0`; no `observeArchivedMissions`) and **no UI path** → they vanished.
+- The waypoint "won't appear until I toggle a layer" bug was Compose **recomposition-skipping**: `TacticalMapPanel` received `SnapshotStateList`s by stable reference, so the memoized `AndroidView(update=…)` lambda was not re-invoked on content-only changes.
+- Reports lived only as MediaStore files discovered by filename regex; HISTORY had **no search field** and reports carried **no structured metadata**.
+
+### 15.3 Phase 1 — Planning usability (vc32 / 1.4.0-planning)
+- **Live-refresh fix:** OPS and Mission planner now pass immutable `.toList()` snapshots into `TacticalMapPanel`, changing parameter identity per emission so the update block re-runs (per-layer hash gates still prevent redundant overlay rebuilds). New waypoints/routes/zones appear immediately.
+- **Zones wired into OPS:** added `GeoDao.observeAllAreas()` (read-only, no migration); OPS MAP gained a **ZONES** layer toggle and a **▭ ZONE** draw tool (the panel already rendered areas) with save/edit/delete dialogs.
+- **OBJECTS management view:** new OPS tab listing every map object (waypoints/routes/zones, global + mission-linked) with a mission/global badge; each row opens the same rename/retype/delete sheet as a map tap — giving **routes and zones a reliable, discoverable delete** without precisely tapping thin geometry.
+- No schema change in Phase 1 (DB stays version 4).
