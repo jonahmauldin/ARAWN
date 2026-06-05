@@ -45,13 +45,21 @@ import com.arawn.core.database.GeoDao
 import com.arawn.core.database.MissionDao
 import com.arawn.core.database.MissionEntity
 import com.arawn.core.database.MissionStatus
+import com.arawn.core.database.RouteEntity
+import com.arawn.core.database.RoutePointEntity
+import com.arawn.core.database.RouteType
 import com.arawn.core.database.RouteWithPoints
 import com.arawn.core.database.WaypointEntity
 import com.arawn.core.database.WaypointType
 import com.arawn.core.database.WirelessDao
+import com.arawn.scanner.map.MapTool
+import com.arawn.scanner.map.SessionTrack
+import com.arawn.scanner.map.TacticalMapPanel
+import com.arawn.scanner.map.cleanTrack
 import com.arawn.scanner.tilePacks.TilePackPanel
 import com.arawn.scanner.tilePacks.loadActivePack
 import kotlinx.coroutines.launch
+import org.osmdroid.util.GeoPoint
 import java.io.File
 import java.util.Locale
 
@@ -121,8 +129,10 @@ fun OpsScreen(
     LaunchedEffect(Unit) {
         wirelessDao.observeSessions().collect { sessions ->
             val loaded = sessions.mapNotNull { session ->
-                val coords = wirelessDao.getSessionCoordinates(session.sessionId)
-                if (coords.isEmpty()) null else SessionTrack(coords, session.missionId)
+                // cleanTrack drops no-fix (0,0) points and GPS "teleport" outliers
+                // so the map no longer draws stray lines to spots never visited.
+                val coords = cleanTrack(wirelessDao.getSessionCoordinates(session.sessionId))
+                if (coords.size < 2) null else SessionTrack(coords, session.missionId)
             }
             tracks.clear(); tracks.addAll(loaded)
         }
@@ -150,6 +160,12 @@ fun OpsScreen(
     var pendingPinLat   by remember { mutableStateOf<Double?>(null) }
     var pendingPinLon   by remember { mutableStateOf<Double?>(null) }
     var editingWaypoint by remember { mutableStateOf<WaypointEntity?>(null) }
+
+    // ── Route-drawing state ───────────────────────────────────────────────────
+    var mapTool             by remember { mutableStateOf(MapTool.NONE) }
+    val drawPoints          = remember { mutableStateListOf<GeoPoint>() }
+    var showSaveRouteDialog by remember { mutableStateOf(false) }
+    var editingRoute        by remember { mutableStateOf<RouteEntity?>(null) }
 
     // ── PLAN mode state ───────────────────────────────────────────────────────
     var selectedForMission    by remember { mutableStateOf(emptySet<Long>()) }
@@ -190,6 +206,7 @@ fun OpsScreen(
                     fontSize   = 12.sp,
                     modifier   = Modifier.clickable {
                         if (view != OpsView.PLAN) selectedForMission = emptySet()
+                        if (view != OpsView.MAP) { mapTool = MapTool.NONE; drawPoints.clear() }
                         opsView = view
                     },
                 )
@@ -207,28 +224,52 @@ fun OpsScreen(
 
             // ── MAP ──────────────────────────────────────────────────────────
             OpsView.MAP -> {
-                // Layer toggle row
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    LayerChip("TRACKS",    showTracks)    { showTracks    = !showTracks }
-                    LayerChip("WPT",       showWaypoints) { showWaypoints = !showWaypoints }
-                    LayerChip("ROUTES",    showRoutes)    { showRoutes    = !showRoutes }
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text       = "long press = pin",
-                        color      = Color(0xFF333333),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize   = 10.sp,
-                    )
+                if (mapTool == MapTool.ROUTE) {
+                    // Route-drawing toolbar (replaces the layer row while drawing).
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text       = "✎ ROUTE · ${drawPoints.size} pts",
+                            color      = Amber,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize   = 11.sp,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        ToolAction("UNDO", enabled = drawPoints.isNotEmpty()) {
+                            if (drawPoints.isNotEmpty()) drawPoints.removeAt(drawPoints.lastIndex)
+                        }
+                        ToolAction("CLEAR", enabled = drawPoints.isNotEmpty()) { drawPoints.clear() }
+                        ToolAction("SAVE", enabled = drawPoints.size >= 2, color = TermGreen) {
+                            if (drawPoints.size >= 2) showSaveRouteDialog = true
+                        }
+                        ToolAction("CANCEL", color = DimRed) {
+                            drawPoints.clear(); mapTool = MapTool.NONE
+                        }
+                    }
+                } else {
+                    // Layer toggle row + draw entry point.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        LayerChip("TRACKS",    showTracks)    { showTracks    = !showTracks }
+                        LayerChip("WPT",       showWaypoints) { showWaypoints = !showWaypoints }
+                        LayerChip("ROUTES",    showRoutes)    { showRoutes    = !showRoutes }
+                        Spacer(Modifier.weight(1f))
+                        ToolAction("✎ DRAW ROUTE", color = Amber) {
+                            drawPoints.clear(); mapTool = MapTool.ROUTE
+                        }
+                    }
                 }
 
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth().background(PanelBlack).clipToBounds(),
                 ) {
-                    OpsMapPanel(
+                    TacticalMapPanel(
                         tracks         = tracks,
                         livePosition   = livePosition,
                         waypoints      = waypoints,
@@ -237,22 +278,38 @@ fun OpsScreen(
                         showTracks     = showTracks,
                         showWaypoints  = showWaypoints,
                         showRoutes     = showRoutes,
-                        onMapLongPress = { lat, lon ->
-                            pendingPinLat = lat
-                            pendingPinLon = lon
-                        },
+                        tool           = mapTool,
+                        drawPoints     = drawPoints,
+                        onMapTap       = { gp -> drawPoints.add(gp) },
+                        onMapLongPress = if (mapTool == MapTool.NONE) {
+                            { lat, lon -> pendingPinLat = lat; pendingPinLon = lon }
+                        } else null,
                         onWaypointTap  = { wp -> editingWaypoint = wp },
+                        onRouteTap     = { route -> editingRoute = route },
                         modifier       = Modifier.fillMaxSize(),
                     )
 
-                    if (tracks.isEmpty() && waypoints.isEmpty() && livePosition == null) {
+                    if (tracks.isEmpty() && waypoints.isEmpty() && routes.isEmpty() && livePosition == null) {
                         Text(
                             text       = "// long press map to drop a pin\n" +
+                                "// ✎ DRAW ROUTE to plan a path\n" +
                                 "// start RECON to build GPS tracks",
                             color      = Color(0xFF3A3A3A),
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 12.sp,
                             modifier   = Modifier.align(Alignment.Center).padding(16.dp),
+                        )
+                    }
+
+                    if (mapTool == MapTool.ROUTE) {
+                        Text(
+                            text       = "tap map to add route points",
+                            color      = Color(0xFF777777),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize   = 10.sp,
+                            modifier   = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(8.dp),
                         )
                     }
                 }
@@ -262,7 +319,7 @@ fun OpsScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
                     Text(
-                        text       = "tracks: ${tracks.size}  ·  pins: ${waypoints.count { it.missionId == null }}",
+                        text       = "tracks: ${tracks.size}  ·  pins: ${waypoints.count { it.missionId == null }}  ·  routes: ${routes.size}",
                         color      = Color.Gray,
                         fontFamily = FontFamily.Monospace,
                         fontSize   = 11.sp,
@@ -455,11 +512,77 @@ fun OpsScreen(
             onDismiss = { showCreateMissionDialog = false },
         )
     }
+
+    // Save-route dialog (after drawing ≥2 points and tapping SAVE)
+    if (showSaveRouteDialog) {
+        NameRouteDialog(
+            pointCount = drawPoints.size,
+            onConfirm  = { name ->
+                val pts = drawPoints.toList() // stable copy before state is cleared
+                scope.launch {
+                    val routeId = geoDao.insertRoute(
+                        RouteEntity(
+                            missionId = null,
+                            name      = name,
+                            type      = RouteType.PLANNED,
+                            createdMs = System.currentTimeMillis(),
+                        )
+                    )
+                    geoDao.insertRoutePoints(
+                        pts.mapIndexed { i, gp ->
+                            RoutePointEntity(
+                                routeId   = routeId,
+                                seq       = i,
+                                latitude  = gp.latitude,
+                                longitude = gp.longitude,
+                            )
+                        }
+                    )
+                }
+                drawPoints.clear()
+                mapTool = MapTool.NONE
+                showSaveRouteDialog = false
+            },
+            onDismiss = { showSaveRouteDialog = false },
+        )
+    }
+
+    // Edit/delete route sheet (after tapping a route polyline)
+    editingRoute?.let { route ->
+        EditRouteDialog(
+            route     = route,
+            onUpdate  = { updated ->
+                scope.launch { geoDao.updateRoute(updated) }
+                editingRoute = null
+            },
+            onDelete  = {
+                scope.launch { geoDao.deleteRoute(route) }
+                editingRoute = null
+            },
+            onDismiss = { editingRoute = null },
+        )
+    }
 }
 
 // =============================================================================
 //  Sub-composables
 // =============================================================================
+
+@Composable
+private fun ToolAction(
+    label: String,
+    enabled: Boolean = true,
+    color: Color = Amber,
+    onClick: () -> Unit,
+) {
+    Text(
+        text       = "[ $label ]",
+        color      = if (enabled) color else Color(0xFF333333),
+        fontFamily = FontFamily.Monospace,
+        fontSize   = 10.sp,
+        modifier   = if (enabled) Modifier.clickable(onClick = onClick) else Modifier,
+    )
+}
 
 @Composable
 private fun LayerChip(label: String, active: Boolean, onClick: () -> Unit) {
@@ -725,6 +848,125 @@ private fun CreateMissionDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun NameRouteDialog(
+    pointCount: Int,
+    onConfirm: (name: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PanelBlack,
+        title = {
+            Text("SAVE ROUTE", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text       = "$pointCount point${if (pointCount == 1) "" else "s"} in this route.",
+                    color      = Color(0xFF555555),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 11.sp,
+                )
+                OutlinedTextField(
+                    value         = name,
+                    onValueChange = { name = it },
+                    label         = { Text("Route name", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth(),
+                    colors        = fieldColors,
+                    textStyle     = monoStyle,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim()) },
+            ) {
+                Text("SAVE", fontFamily = FontFamily.Monospace, color = TermGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun EditRouteDialog(
+    route: RouteEntity,
+    onUpdate: (RouteEntity) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name          by remember(route.routeId) { mutableStateOf(route.name) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PanelBlack,
+        title = {
+            Text("EDIT ROUTE", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value         = name,
+                    onValueChange = { name = it },
+                    label         = { Text("Name", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth(),
+                    colors        = fieldColors,
+                    textStyle     = monoStyle,
+                )
+                Text(
+                    text       = "${route.type.name} route",
+                    color      = Color(0xFF555555),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 10.sp,
+                )
+                if (confirmDelete) {
+                    Text(
+                        "Permanently delete this route?",
+                        color      = DimRed,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize   = 11.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (confirmDelete) {
+                    TextButton(onClick = onDelete) {
+                        Text("CONFIRM DELETE", fontFamily = FontFamily.Monospace, color = DimRed)
+                    }
+                } else {
+                    TextButton(onClick = { confirmDelete = true }) {
+                        Text("[×] DELETE", fontFamily = FontFamily.Monospace, color = Color(0xFF3A1A1A))
+                    }
+                    TextButton(
+                        enabled = name.isNotBlank(),
+                        onClick = { onUpdate(route.copy(name = name.trim())) },
+                    ) {
+                        Text("SAVE", fontFamily = FontFamily.Monospace, color = TermGreen)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (confirmDelete) confirmDelete = false else onDismiss() }) {
                 Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
             }
         },

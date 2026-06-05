@@ -40,23 +40,50 @@ class HtmlReportExporter(context: Context) {
     /**
      * Generate one combined report from one or more sessions.
      * Wi-Fi/BLE rows are merged per-BSSID; tracks are concatenated and colour-coded.
+     *
+     * [title] is an optional operator label (e.g. "Walmart scan"). When present it is
+     * embedded in the file's display name as `Walmart scan (ARAWN S3 <stamp>).html`
+     * so reports are identifiable in the History list; the History tab parses it back
+     * out. Legacy untitled reports keep the `ARAWN_Report_S#_<stamp>.html` name.
      */
-    suspend fun exportSessions(sessionIds: List<Long>): ExportResult = withContext(Dispatchers.IO) {
+    suspend fun exportSessions(
+        sessionIds: List<Long>,
+        title: String? = null,
+    ): ExportResult = withContext(Dispatchers.IO) {
         runCatching {
-            val data = ReportDataCollector(dao, appContext).collectMultiple(sessionIds)
+            val data = ReportDataCollector(dao, appContext).collectMultiple(sessionIds, title)
                 ?: return@runCatching ExportResult(false, "Selected sessions have no data.")
             val html = HtmlReportRenderer.render(data)
             val stamp = STAMP.format(Date())
-            val name = if (sessionIds.size == 1)
-                "ARAWN_Report_S${sessionIds.first()}_$stamp.html"
+            val sessLabel = if (sessionIds.size == 1) "S${sessionIds.first()}"
+                            else "Multi${sessionIds.size}"
+            val safeTitle = sanitizeTitle(title)
+            val name = if (safeTitle != null)
+                "$safeTitle (ARAWN $sessLabel $stamp).html"
             else
-                "ARAWN_Report_Multi${sessionIds.size}_$stamp.html"
+                "ARAWN_Report_${sessLabel}_$stamp.html"
             val path = write(name, html)
                 ?: return@runCatching ExportResult(false, "MediaStore rejected the write.")
             ExportResult(true, "Report saved → $path", path)
         }.getOrElse { e ->
             ExportResult(false, "Report error: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /**
+     * Make an operator title safe for a MediaStore display name: drop path-illegal
+     * characters and parentheses (the History parser uses ` (ARAWN ` as the title
+     * delimiter), collapse whitespace, and cap the length. Returns null when nothing
+     * usable remains, so the caller falls back to the untitled naming scheme.
+     */
+    private fun sanitizeTitle(raw: String?): String? {
+        val cleaned = raw
+            ?.replace(Regex("""[/\\:*?"<>|()\r\n\t]"""), " ")
+            ?.replace(Regex("""\s+"""), " ")
+            ?.trim()
+            ?.take(60)
+            ?.trim()
+        return cleaned?.takeIf { it.isNotBlank() }
     }
 
     private fun write(name: String, content: String): String? {

@@ -117,6 +117,11 @@ interface GeoDao {
     @Query("SELECT * FROM routes WHERE missionId = :missionId")
     fun observeRoutesForMission(missionId: Long): Flow<List<RouteEntity>>
 
+    /** Mission routes with their ordered points — used by the Mission planner map. */
+    @Transaction
+    @Query("SELECT * FROM routes WHERE missionId = :missionId ORDER BY createdMs DESC")
+    fun observeRoutesWithPointsForMission(missionId: Long): Flow<List<RouteWithPoints>>
+
     // ---- areas ----
     @Insert suspend fun insertArea(a: AreaOverlayEntity): Long
     @Update suspend fun updateArea(a: AreaOverlayEntity)

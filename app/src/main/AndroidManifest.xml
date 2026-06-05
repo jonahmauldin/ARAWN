@@ -93,6 +93,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Grants a system viewer temporary read access to a vault file that was
+             decrypted into app-private cache (Vault → VIEW). The plaintext is wiped
+             when the vault locks / the screen is left (see VaultRepository.wipeViewCache). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

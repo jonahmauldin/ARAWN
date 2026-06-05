@@ -1,6 +1,7 @@
 package com.arawn.scanner.missions
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.arawn.core.database.AreaOverlayEntity
+import com.arawn.core.database.CoordinatePair
 import com.arawn.core.database.GeoDao
 import com.arawn.core.database.MissionDao
 import com.arawn.core.database.MissionEntity
@@ -49,13 +53,24 @@ import com.arawn.core.database.MissionItemEntity
 import com.arawn.core.database.MissionItemType
 import com.arawn.core.database.MissionStatus
 import com.arawn.core.database.MissionWithItems
+import com.arawn.core.database.RouteEntity
+import com.arawn.core.database.RoutePointEntity
+import com.arawn.core.database.RouteType
+import com.arawn.core.database.RouteWithPoints
 import com.arawn.core.database.SessionEntity
 import com.arawn.core.database.WaypointEntity
 import com.arawn.core.database.WaypointType
 import com.arawn.core.database.WirelessDao
-import com.arawn.scanner.WaypointMiniMap
 import com.arawn.scanner.hasLocation
+import com.arawn.scanner.map.MapTool
+import com.arawn.scanner.map.TacticalMapPanel
+import com.arawn.scanner.map.bearingDegrees
+import com.arawn.scanner.map.haversineMeters
+import com.arawn.scanner.map.measureLabel
+import com.arawn.scanner.map.polygonToGeoJson
+import androidx.compose.ui.draw.clipToBounds
 import kotlinx.coroutines.launch
+import org.osmdroid.util.GeoPoint
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -98,6 +113,7 @@ fun MissionsScreen(
     missionDao: MissionDao,
     geoDao: GeoDao,
     wirelessDao: WirelessDao,
+    livePosition: CoordinatePair? = null,
 ) {
     var selectedMissionId by remember { mutableStateOf<Long?>(null) }
 
@@ -112,6 +128,7 @@ fun MissionsScreen(
             missionDao = missionDao,
             geoDao = geoDao,
             wirelessDao = wirelessDao,
+            livePosition = livePosition,
             onBack = { selectedMissionId = null },
         )
     }
@@ -273,10 +290,13 @@ private fun MissionDetailContent(
     missionDao: MissionDao,
     geoDao: GeoDao,
     wirelessDao: WirelessDao,
+    livePosition: CoordinatePair?,
     onBack: () -> Unit,
 ) {
     var missionWithItems by remember { mutableStateOf<MissionWithItems?>(null) }
     val waypoints       = remember { mutableStateListOf<WaypointEntity>() }
+    val routes          = remember { mutableStateListOf<RouteWithPoints>() }
+    val areas           = remember { mutableStateListOf<AreaOverlayEntity>() }
     val linkedSessions  = remember { mutableStateListOf<SessionEntity>() }
     val allSessions     = remember { mutableStateListOf<SessionEntity>() }
 
@@ -288,6 +308,16 @@ private fun MissionDetailContent(
     var sessionToUntag        by remember { mutableStateOf<SessionEntity?>(null) }
     var showArchiveConfirm    by remember { mutableStateOf(false) }
 
+    // ── Planner map state ──────────────────────────────────────────────────
+    var mapTool          by remember { mutableStateOf(MapTool.NONE) }
+    val drawPoints       = remember { mutableStateListOf<GeoPoint>() }
+    var liveCenter       by remember { mutableStateOf<GeoPoint?>(null) }
+    var pendingMarker    by remember { mutableStateOf<GeoPoint?>(null) }
+    var showSaveRouteDialog by remember { mutableStateOf(false) }
+    var showSaveAreaDialog  by remember { mutableStateOf(false) }
+    var editingRoute     by remember { mutableStateOf<RouteEntity?>(null) }
+    var editingArea      by remember { mutableStateOf<AreaOverlayEntity?>(null) }
+
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(missionId) {
@@ -297,6 +327,18 @@ private fun MissionDetailContent(
         geoDao.observeWaypointsForMission(missionId).collect { list ->
             waypoints.clear()
             waypoints.addAll(list)
+        }
+    }
+    LaunchedEffect(missionId) {
+        geoDao.observeRoutesWithPointsForMission(missionId).collect { list ->
+            routes.clear()
+            routes.addAll(list)
+        }
+    }
+    LaunchedEffect(missionId) {
+        geoDao.observeAreasForMission(missionId).collect { list ->
+            areas.clear()
+            areas.addAll(list)
         }
     }
     LaunchedEffect(missionId) {
@@ -398,22 +440,139 @@ private fun MissionDetailContent(
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
 
-        // ── Waypoint mini-map ─────────────────────────────────────────────
-        // Shown only when at least one waypoint has a real map position.
+        // ── Mission planner map (ATAK-lite) ───────────────────────────────
         val mappableWaypoints = waypoints.filter { it.hasLocation() }
-        if (mappableWaypoints.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-            ) {
-                WaypointMiniMap(
-                    waypoints = mappableWaypoints,
-                    modifier  = Modifier.fillMaxSize(),
+
+        // Tool selector. Tapping the active tool toggles it back off.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToolChip("◆ MARKER", mapTool == MapTool.MARKER) {
+                drawPoints.clear(); mapTool = if (mapTool == MapTool.MARKER) MapTool.NONE else MapTool.MARKER
+            }
+            ToolChip("✎ ROUTE", mapTool == MapTool.ROUTE) {
+                drawPoints.clear(); mapTool = if (mapTool == MapTool.ROUTE) MapTool.NONE else MapTool.ROUTE
+            }
+            ToolChip("▭ AREA", mapTool == MapTool.AREA) {
+                drawPoints.clear(); mapTool = if (mapTool == MapTool.AREA) MapTool.NONE else MapTool.AREA
+            }
+            ToolChip("⟂ RULER", mapTool == MapTool.MEASURE) {
+                drawPoints.clear(); mapTool = if (mapTool == MapTool.MEASURE) MapTool.NONE else MapTool.MEASURE
+            }
+        }
+
+        Box(
+            modifier = Modifier.fillMaxWidth().height(320.dp).clipToBounds(),
+        ) {
+            TacticalMapPanel(
+                waypoints       = mappableWaypoints,
+                routes          = routes,
+                areas           = areas,
+                livePosition    = livePosition,
+                tool            = mapTool,
+                drawPoints      = drawPoints,
+                onMapTap        = { gp ->
+                    when (mapTool) {
+                        MapTool.MARKER  -> pendingMarker = gp
+                        MapTool.ROUTE,
+                        MapTool.AREA    -> drawPoints.add(gp)
+                        MapTool.MEASURE -> {
+                            if (drawPoints.size >= 2) drawPoints.clear()
+                            drawPoints.add(gp)
+                        }
+                        MapTool.NONE -> Unit
+                    }
+                },
+                onWaypointTap   = { wp -> waypointToDelete = wp },
+                onRouteTap      = { route -> editingRoute = route },
+                onAreaTap       = { area -> editingArea = area },
+                onCenterChanged = { lat, lon -> liveCenter = GeoPoint(lat, lon) },
+                modifier        = Modifier.fillMaxSize(),
+            )
+
+            // Center crosshair — the reference point for the live readout.
+            Text(
+                text = "+",
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 22.sp,
+                modifier = Modifier.align(Alignment.Center),
+            )
+
+            // Live coordinate / measure readout.
+            val readout: String? = when {
+                mapTool == MapTool.MEASURE && drawPoints.size >= 2 -> {
+                    val a = drawPoints.first(); val b = drawPoints.last()
+                    measureLabel(
+                        haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude),
+                        bearingDegrees(a.latitude, a.longitude, b.latitude, b.longitude),
+                    )
+                }
+                liveCenter != null ->
+                    "⊹ %.5f, %.5f".format(Locale.US, liveCenter!!.latitude, liveCenter!!.longitude)
+                else -> null
+            }
+            if (readout != null) {
+                Text(
+                    text = readout,
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                 )
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
+
+            // Contextual draw actions while a geometry tool is active.
+            if (mapTool == MapTool.ROUTE || mapTool == MapTool.AREA) {
+                val minPts = if (mapTool == MapTool.AREA) 3 else 2
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Color(0xCC000000))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${drawPoints.size} pts",
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    DrawAction("UNDO", drawPoints.isNotEmpty()) {
+                        if (drawPoints.isNotEmpty()) drawPoints.removeAt(drawPoints.lastIndex)
+                    }
+                    DrawAction("SAVE", drawPoints.size >= minPts, TerminalGreen) {
+                        if (mapTool == MapTool.ROUTE) showSaveRouteDialog = true
+                        else showSaveAreaDialog = true
+                    }
+                    DrawAction("CANCEL", true, DimRed) {
+                        drawPoints.clear(); mapTool = MapTool.NONE
+                    }
+                }
+            } else if (mapTool == MapTool.MARKER) {
+                Text(
+                    text = "tap map to drop an asset marker",
+                    color = Color(0xFFBBBBBB),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(8.dp)
+                        .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                )
+            }
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
 
         // Scrollable body
         LazyColumn(
@@ -457,6 +616,30 @@ private fun MissionDetailContent(
             }
             item {
                 AddRowButton("+ ADD WAYPOINT") { showAddWaypointDialog = true }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // ── ROUTES ────────────────────────────────────────────────────
+            item {
+                SectionHeader("// ROUTES  (${routes.size})")
+            }
+            items(routes, key = { "rte-${it.route.routeId}" }) { rw ->
+                RouteRow(route = rw, onClick = { editingRoute = rw.route })
+            }
+            item {
+                HintRow("draw routes with the ✎ ROUTE tool on the map")
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // ── AREAS / ZONES ─────────────────────────────────────────────
+            item {
+                SectionHeader("// AREAS / ZONES  (${areas.size})")
+            }
+            items(areas, key = { "area-${it.areaId}" }) { area ->
+                AreaRow(area = area, onClick = { editingArea = area })
+            }
+            item {
+                HintRow("highlight zones with the ▭ AREA tool on the map")
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -600,6 +783,121 @@ private fun MissionDetailContent(
                 }
             },
             onDismiss = { showArchiveConfirm = false },
+        )
+    }
+
+    // ── Planner dialogs ─────────────────────────────────────────────────────
+
+    pendingMarker?.let { gp ->
+        PlaceMarkerDialog(
+            lat = gp.latitude,
+            lon = gp.longitude,
+            onConfirm = { name, type, lat, lon ->
+                scope.launch {
+                    geoDao.insertWaypoint(
+                        WaypointEntity(
+                            missionId = missionId,
+                            name      = name,
+                            latitude  = lat,
+                            longitude = lon,
+                            type      = type,
+                            createdMs = System.currentTimeMillis(),
+                        )
+                    )
+                }
+                pendingMarker = null // tool stays MARKER so several can be dropped
+            },
+            onDismiss = { pendingMarker = null },
+        )
+    }
+
+    if (showSaveRouteDialog) {
+        NamePlannerDialog(
+            title      = "SAVE ROUTE",
+            countLabel = "${drawPoints.size} points",
+            onConfirm  = { name ->
+                val pts = drawPoints.toList()
+                scope.launch {
+                    val routeId = geoDao.insertRoute(
+                        RouteEntity(
+                            missionId = missionId,
+                            name      = name,
+                            type      = RouteType.PLANNED,
+                            createdMs = System.currentTimeMillis(),
+                        )
+                    )
+                    geoDao.insertRoutePoints(
+                        pts.mapIndexed { i, gp ->
+                            RoutePointEntity(
+                                routeId   = routeId,
+                                seq       = i,
+                                latitude  = gp.latitude,
+                                longitude = gp.longitude,
+                            )
+                        }
+                    )
+                }
+                drawPoints.clear(); mapTool = MapTool.NONE; showSaveRouteDialog = false
+            },
+            onDismiss = { showSaveRouteDialog = false },
+        )
+    }
+
+    if (showSaveAreaDialog) {
+        SaveAreaDialog(
+            countLabel = "${drawPoints.size} vertices",
+            onConfirm  = { name, strokeColor ->
+                val pts = drawPoints.toList()
+                val fill = (0x33 shl 24) or (strokeColor and 0x00FFFFFF)
+                scope.launch {
+                    geoDao.insertArea(
+                        AreaOverlayEntity(
+                            missionId   = missionId,
+                            name        = name,
+                            geoJson     = polygonToGeoJson(pts),
+                            fillColor   = fill,
+                            strokeColor = strokeColor,
+                            createdMs   = System.currentTimeMillis(),
+                        )
+                    )
+                }
+                drawPoints.clear(); mapTool = MapTool.NONE; showSaveAreaDialog = false
+            },
+            onDismiss = { showSaveAreaDialog = false },
+        )
+    }
+
+    editingRoute?.let { route ->
+        EditGeoDialog(
+            title        = "EDIT ROUTE",
+            initialName  = route.name,
+            subtitle     = "${route.type.name} route",
+            onUpdate     = { newName ->
+                scope.launch { geoDao.updateRoute(route.copy(name = newName)) }
+                editingRoute = null
+            },
+            onDelete     = {
+                scope.launch { geoDao.deleteRoute(route) }
+                editingRoute = null
+            },
+            onDismiss    = { editingRoute = null },
+        )
+    }
+
+    editingArea?.let { area ->
+        EditGeoDialog(
+            title        = "EDIT AREA",
+            initialName  = area.name,
+            subtitle     = "zone overlay",
+            onUpdate     = { newName ->
+                scope.launch { geoDao.updateArea(area.copy(name = newName)) }
+                editingArea = null
+            },
+            onDelete     = {
+                scope.launch { geoDao.deleteArea(area) }
+                editingArea = null
+            },
+            onDismiss    = { editingArea = null },
         )
     }
 }
@@ -1029,5 +1327,330 @@ private fun TerminalTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         singleLine = true,
         modifier = modifier.fillMaxWidth(),
+    )
+}
+
+// =============================================================================
+// PLANNER ROWS + DIALOGS
+// =============================================================================
+
+@Composable
+private fun ToolChip(label: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (active) Color.Black else Amber,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .background(if (active) Amber else Color(0xFF161616), RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
+private fun DrawAction(
+    label: String,
+    enabled: Boolean,
+    color: Color = Amber,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = "[ $label ]",
+        color = if (enabled) color else Color(0xFF444444),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        modifier = if (enabled) Modifier.clickable(onClick = onClick) else Modifier,
+    )
+}
+
+@Composable
+private fun HintRow(text: String) {
+    Text(
+        text = "// $text",
+        color = Color(0xFF3A3A3A),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.sp,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun RouteRow(route: RouteWithPoints, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PanelBlack, RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "⟿ ${route.route.name}",
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+            Text(
+                text = "${route.points.size} pts  ·  ${route.route.type.name}",
+                color = Color(0xFF555555),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+        }
+        Text(
+            text = "EDIT",
+            color = Color(0xFF555555),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+    }
+}
+
+@Composable
+private fun AreaRow(area: AreaOverlayEntity, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PanelBlack, RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "▭",
+            color = area.strokeColor?.let { Color(it) } ?: Amber,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 14.sp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = area.name,
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+            Text(
+                text = "zone overlay",
+                color = Color(0xFF555555),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+        }
+        Text(
+            text = "EDIT",
+            color = Color(0xFF555555),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+    }
+}
+
+/** Drops a mission asset marker at a tapped point (name + type). Coordinates are
+ *  passed back through onConfirm as stable copies (see OpsScreen.PlacePinDialog). */
+@Composable
+private fun PlaceMarkerDialog(
+    lat: Double,
+    lon: Double,
+    onConfirm: (name: String, type: WaypointType, lat: Double, lon: Double) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val types = WaypointType.entries
+    var name by remember { mutableStateOf("") }
+    var typeIdx by remember { mutableStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text("PLACE MARKER", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "%.6f, %.6f".format(Locale.US, lat, lon),
+                    color = Color(0xFF555555),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+                TerminalTextField(value = name, label = "Marker name", onValueChange = { name = it })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("◀", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 14.sp,
+                        modifier = Modifier.clickable { typeIdx = (typeIdx - 1 + types.size) % types.size })
+                    Text("[ ${types[typeIdx].displayLabel()} ]",
+                        color = Amber, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    Text("▶", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 14.sp,
+                        modifier = Modifier.clickable { typeIdx = (typeIdx + 1) % types.size })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), types[typeIdx], lat, lon) },
+            ) {
+                Text("DROP", fontFamily = FontFamily.Monospace, color = TerminalGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun NamePlannerDialog(
+    title: String,
+    countLabel: String,
+    onConfirm: (name: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text(title, fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(countLabel, color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                TerminalTextField(value = name, label = "Name", onValueChange = { name = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim()) },
+            ) {
+                Text("SAVE", fontFamily = FontFamily.Monospace, color = TerminalGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+private val AREA_COLORS = listOf(
+    0xFFCC3B3B.toInt(), 0xFFE0B341.toInt(), 0xFF35D07F.toInt(),
+    0xFF4FA3D8.toInt(), 0xFF9B59B6.toInt(), 0xFF00CFCF.toInt(),
+)
+
+@Composable
+private fun SaveAreaDialog(
+    countLabel: String,
+    onConfirm: (name: String, colorInt: Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var colorIdx by remember { mutableStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text("SAVE AREA", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(countLabel, color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                TerminalTextField(value = name, label = "Zone name", onValueChange = { name = it })
+                Text("COLOR", color = Color(0xFF666666), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AREA_COLORS.forEachIndexed { i, c ->
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .background(Color(c), RoundedCornerShape(4.dp))
+                                .then(
+                                    if (i == colorIdx)
+                                        Modifier.border(2.dp, Ink, RoundedCornerShape(4.dp))
+                                    else Modifier
+                                )
+                                .clickable { colorIdx = i },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), AREA_COLORS[colorIdx]) },
+            ) {
+                Text("SAVE", fontFamily = FontFamily.Monospace, color = TerminalGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun EditGeoDialog(
+    title: String,
+    initialName: String,
+    subtitle: String,
+    onUpdate: (String) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text(title, fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TerminalTextField(value = name, label = "Name", onValueChange = { name = it })
+                Text(subtitle, color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                if (confirmDelete) {
+                    Text("Permanently delete this?", color = DimRed, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (confirmDelete) {
+                    TextButton(onClick = onDelete) {
+                        Text("CONFIRM DELETE", fontFamily = FontFamily.Monospace, color = DimRed)
+                    }
+                } else {
+                    TextButton(onClick = { confirmDelete = true }) {
+                        Text("[×] DELETE", fontFamily = FontFamily.Monospace, color = Color(0xFF3A1A1A))
+                    }
+                    TextButton(
+                        enabled = name.isNotBlank(),
+                        onClick = { if (name.isNotBlank()) onUpdate(name.trim()) },
+                    ) {
+                        Text("SAVE", fontFamily = FontFamily.Monospace, color = TerminalGreen)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (confirmDelete) confirmDelete = false else onDismiss() }) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
     )
 }

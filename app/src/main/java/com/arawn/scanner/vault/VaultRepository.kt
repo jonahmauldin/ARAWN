@@ -97,6 +97,48 @@ class VaultRepository(
         vaultDao.deleteEntry(entry)
     }
 
+    // ── Viewing (decrypt-to-cache) ─────────────────────────────────────────────
+
+    /** App-private staging dir for decrypted-for-viewing plaintext. */
+    private val viewDir: File
+        get() = File(context.applicationContext.cacheDir, VIEW_DIR).also { it.mkdirs() }
+
+    /**
+     * Decrypt [entry] to a temporary plaintext file in app-private cache so it can
+     * be opened by a system viewer via FileProvider. The original display name (and
+     * thus extension) is preserved so the viewer can detect the type.
+     *
+     * SECURITY: this is the deliberate tradeoff for "view any file type" — plaintext
+     * briefly exists on app-private storage (not world-readable). Always pair with
+     * [wipeViewCache], which the Vault screen calls on dispose and the Activity calls
+     * when the vault auto-locks, so plaintext never outlives an unlocked session.
+     */
+    suspend fun decryptToCache(entry: VaultEntryEntity): File = withContext(Dispatchers.IO) {
+        val plaintext = decrypt(entry)
+        val out = File(viewDir, sanitizeFileName(entry.displayName))
+        out.writeBytes(plaintext)
+        out
+    }
+
+    /** Delete every decrypted-for-viewing plaintext file. Safe to call repeatedly. */
+    fun wipeViewCache() {
+        runCatching { viewDir.listFiles()?.forEach { it.delete() } }
+    }
+
+    /** Best-effort MIME type for [entry], from its filename extension then its kind. */
+    fun mimeFor(entry: VaultEntryEntity): String {
+        val ext = entry.displayName.substringAfterLast('.', "").lowercase()
+        val fromExt = if (ext.isNotEmpty())
+            android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) else null
+        return fromExt ?: when (entry.kind) {
+            VaultEntryKind.REPORT -> "text/html"
+            else                  -> "*/*"
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String =
+        name.replace(Regex("""[/\\:*?"<>|\r\n\t]"""), "_").trim().ifBlank { "file" }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /** Best-effort display name from the URI's metadata. Falls back to the raw path. */
@@ -123,5 +165,9 @@ class VaultRepository(
             mime.startsWith("text/")              -> VaultEntryKind.DOCUMENT
             else                                  -> VaultEntryKind.OTHER
         }
+    }
+
+    private companion object {
+        private const val VIEW_DIR = "vault_view"
     }
 }

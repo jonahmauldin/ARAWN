@@ -1,5 +1,7 @@
 package com.arawn.scanner.vault
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +26,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -33,9 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.arawn.core.database.VaultDao
 import com.arawn.core.database.VaultEntryEntity
 import com.arawn.core.database.VaultEntryKind
@@ -75,6 +81,7 @@ fun VaultScreen(
     isUnlocked: Boolean,
     onAuthenticate: () -> Unit,
     onWillPickFile: () -> Unit,
+    onWillOpenExternal: () -> Unit,
     vaultRepository: VaultRepository,
     vaultDao: VaultDao,
 ) {
@@ -82,9 +89,10 @@ fun VaultScreen(
         VaultLockedScreen(onAuthenticate = onAuthenticate)
     } else {
         VaultUnlockedScreen(
-            onWillPickFile  = onWillPickFile,
-            vaultRepository = vaultRepository,
-            vaultDao        = vaultDao,
+            onWillPickFile     = onWillPickFile,
+            onWillOpenExternal = onWillOpenExternal,
+            vaultRepository    = vaultRepository,
+            vaultDao           = vaultDao,
         )
     }
 }
@@ -145,6 +153,7 @@ private fun VaultLockedScreen(onAuthenticate: () -> Unit) {
 @Composable
 private fun VaultUnlockedScreen(
     onWillPickFile: () -> Unit,
+    onWillOpenExternal: () -> Unit,
     vaultRepository: VaultRepository,
     vaultDao: VaultDao,
 ) {
@@ -152,11 +161,45 @@ private fun VaultUnlockedScreen(
     var entryToShred by remember { mutableStateOf<VaultEntryEntity?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         vaultDao.observeEntries().collect { list ->
             entries.clear()
             entries.addAll(list)
+        }
+    }
+
+    // Plaintext decrypted for viewing only ever lives in app-private cache; wipe it
+    // the moment this screen leaves composition (tab change or vault auto-lock).
+    DisposableEffect(Unit) {
+        onDispose { vaultRepository.wipeViewCache() }
+    }
+
+    // Decrypt an entry to cache and hand it to a system viewer via FileProvider.
+    fun viewEntry(entry: VaultEntryEntity) {
+        importError = null
+        scope.launch {
+            runCatching {
+                val file = vaultRepository.decryptToCache(entry)
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", file,
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, vaultRepository.mimeFor(entry))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                // Launching an external viewer sends us through onStop; tell the
+                // Activity not to auto-lock/wipe for this round-trip (same as the
+                // import picker) so the viewer can still read the cached plaintext.
+                onWillOpenExternal()
+                context.startActivity(intent)
+            }.onFailure { e ->
+                importError = when (e) {
+                    is ActivityNotFoundException -> "No app installed to open this file type."
+                    else -> "View failed: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
         }
     }
 
@@ -225,6 +268,7 @@ private fun VaultUnlockedScreen(
                 items(entries, key = { it.vaultEntryId }) { entry ->
                     VaultEntryRow(
                         entry    = entry,
+                        onView   = { viewEntry(entry) },
                         onShred  = { entryToShred = entry },
                     )
                 }
@@ -299,12 +343,14 @@ private fun VaultUnlockedScreen(
 @Composable
 private fun VaultEntryRow(
     entry: VaultEntryEntity,
+    onView: () -> Unit,
     onShred: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(PanelBlack, RoundedCornerShape(6.dp))
+            .clickable(onClick = onView)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -333,6 +379,14 @@ private fun VaultEntryRow(
                 fontSize = 10.sp,
             )
         }
+        Text(
+            text = "[VIEW]",
+            color = TerminalGreen,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            modifier = Modifier.clickable(onClick = onView),
+        )
+        Spacer(Modifier.width(12.dp))
         Text(
             text = "[SHRED]",
             color = Color(0xFF3A1A1A),

@@ -21,7 +21,8 @@ object HtmlReportRenderer {
         append("<!DOCTYPE html><html lang=\"en\"><head>")
         append("<meta charset=\"UTF-8\">")
         append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-        append("<title>ARAWN Report — Session #${data.session.sessionId}</title>")
+        val docTitle = data.meta.title?.let { esc(it) } ?: "Session #${data.session.sessionId}"
+        append("<title>ARAWN Report — $docTitle</title>")
         append("<style>"); append(CSS); append("</style>")
         append("</head><body>")
         append(buildBody(data))
@@ -52,8 +53,12 @@ object HtmlReportRenderer {
             "Duration: ${dur(data.session.durationMs)}"
         else
             "In Progress"
+        val opTitleLine = data.meta.title?.let {
+            """<div style="font-size:20px;font-weight:700;color:#E0B341;margin-top:6px">${esc(it)}</div>"""
+        } ?: ""
         append("""<div class="rpt-header"><div class="container">
 <div class="rpt-title">ARAWN // RF SURVEY REPORT</div>
+$opTitleLine
 <div class="rpt-sub">$sessionLabel &nbsp;·&nbsp; $startLabel &nbsp;·&nbsp; $durationLabel &nbsp;·&nbsp; ${data.meta.deviceModel} &nbsp;·&nbsp; Android ${data.meta.androidVersion}</div>
 </div></div>""")
 
@@ -165,6 +170,13 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
         append("\"exportMs\":${data.meta.exportMs},\"sessionId\":${data.meta.sessionId},")
         append("\"totalRecords\":${data.meta.totalRecords}}}")
     }
+
+    /** Minimal HTML escaping for operator-supplied free text (the report title). */
+    private fun esc(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
 
     private fun ts(ms: Long): String = TIME_FMT.format(Date(ms))
     private fun dur(ms: Long): String {

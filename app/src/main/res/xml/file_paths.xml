@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider path config for the Vault "view file" feature.
+
+  Exposes ONLY the app-private cache subdir (cacheDir/vault_view/) where a vault
+  entry is briefly decrypted so a system viewer can open it. Nothing else in the
+  app's storage is shareable. VaultRepository.wipeViewCache() empties this dir on
+  vault lock / leaving the screen.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="vault_view" path="vault_view/" />
+</paths>

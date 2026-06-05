@@ -54,6 +54,8 @@ data class ReportMeta(
     val exportMs: Long,
     val sessionIds: List<Long>,
     val totalRecords: Int,
+    /** Optional operator-supplied report title (e.g. "Walmart scan"). */
+    val title: String? = null,
 ) {
     /** Primary session id — backward-compat accessor for single-session callers. */
     val sessionId: Long get() = sessionIds.first()

@@ -10,7 +10,8 @@ import kotlinx.coroutines.withContext
 class ReportDataCollector(private val dao: WirelessDao, private val context: Context) {
 
     /** Collect data for a single session — delegates to [collectMultiple]. */
-    suspend fun collect(sessionId: Long): ReportData? = collectMultiple(listOf(sessionId))
+    suspend fun collect(sessionId: Long, title: String? = null): ReportData? =
+        collectMultiple(listOf(sessionId), title)
 
     /**
      * Collect and merge data from one or more sessions into a single [ReportData].
@@ -20,7 +21,10 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
      *
      * Returns null only when every requested session is missing or empty.
      */
-    suspend fun collectMultiple(sessionIds: List<Long>): ReportData? = withContext(Dispatchers.IO) {
+    suspend fun collectMultiple(
+        sessionIds: List<Long>,
+        title: String? = null,
+    ): ReportData? = withContext(Dispatchers.IO) {
         if (sessionIds.isEmpty()) return@withContext null
 
         data class WifiAgg(
@@ -159,6 +163,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                 exportMs = System.currentTimeMillis(),
                 sessionIds = validSessions.map { it.sessionId },
                 totalRecords = totalRecords,
+                title = title?.takeIf { it.isNotBlank() }?.trim(),
             ),
         )
     }

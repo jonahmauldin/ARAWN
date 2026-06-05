@@ -24,6 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -162,6 +165,7 @@ private fun GenerateTab(
     var selectedIds by remember { mutableStateOf(emptySet<Long>()) }
     var generating by remember { mutableStateOf(false) }
     var resultMsg by remember { mutableStateOf<String?>(null) }
+    var reportTitle by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -174,6 +178,29 @@ private fun GenerateTab(
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
+        // Operator report title — embedded in the saved file name + HTML header so
+        // a report is identifiable later (e.g. "walmart scan").
+        OutlinedTextField(
+            value = reportTitle,
+            onValueChange = { reportTitle = it },
+            label = { Text("Report title (optional)", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+            placeholder = { Text("e.g. walmart scan", fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+            singleLine = true,
+            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor   = Amber,
+                unfocusedBorderColor = Color(0xFF333333),
+                focusedLabelColor    = Amber,
+                unfocusedLabelColor  = Color.Gray,
+                cursorColor          = Amber,
+                focusedTextColor     = Ink,
+                unfocusedTextColor   = Ink,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+
         if (sessions.isEmpty()) {
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -261,11 +288,12 @@ private fun GenerateTab(
                     scope.launch {
                         generating = true
                         resultMsg = null
-                        val result = htmlReportExporter.exportSessions(selectedIds.toList())
+                        val result = htmlReportExporter.exportSessions(selectedIds.toList(), reportTitle)
                         resultMsg = result.message
                         generating = false
                         if (result.success) {
                             selectedIds = emptySet()
+                            reportTitle = ""
                             onReportGenerated()
                         }
                     }
@@ -446,6 +474,15 @@ private fun HistoryTab(context: Context, historyKey: Int) {
     }
 }
 
+// Titled reports are saved as "Title (ARAWN S3 20260605_120000).html"; pull the
+// operator title back out for the list. Legacy "ARAWN_Report_*.html" files fall
+// through to their bare filename.
+private val TITLED_REPORT_RE = Regex("""^(.*) \(ARAWN .*\)\.html$""", RegexOption.IGNORE_CASE)
+
+private fun reportDisplayTitle(name: String): String =
+    TITLED_REPORT_RE.matchEntire(name)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+        ?: name.removeSuffix(".html")
+
 @Composable
 private fun ReportFileRow(report: ReportFile, onClick: () -> Unit, onDelete: () -> Unit) {
     Row(
@@ -458,10 +495,10 @@ private fun ReportFileRow(report: ReportFile, onClick: () -> Unit, onDelete: () 
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = report.name,
+                text = reportDisplayTitle(report.name),
                 color = Ink,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
             )
             Spacer(Modifier.height(3.dp))
             Text(
@@ -505,7 +542,9 @@ private fun queryReports(context: Context): List<ReportFile> {
     val selection =
         "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ? AND " +
         "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
-    val selArgs = arrayOf("%ARAWN%", "ARAWN_Report%.html")
+    // Match every .html in the ARAWN folder so BOTH legacy (ARAWN_Report_*.html)
+    // and titled ("Walmart scan (ARAWN S3 …).html") reports are listed.
+    val selArgs = arrayOf("%ARAWN%", "%.html")
     val order = "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
 
     resolver.query(baseUri, projection, selection, selArgs, order)?.use { cursor ->

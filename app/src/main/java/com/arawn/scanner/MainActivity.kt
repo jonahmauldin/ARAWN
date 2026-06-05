@@ -227,9 +227,10 @@ class MainActivity : AppCompatActivity() {
                                 onReport        = { generateHtmlReport() },
                             )
                             AppScreen.MISSIONS -> com.arawn.scanner.missions.MissionsScreen(
-                                missionDao  = container.missionDao,
-                                geoDao      = container.geoDao,
-                                wirelessDao = container.wirelessDao,
+                                missionDao   = container.missionDao,
+                                geoDao       = container.geoDao,
+                                wirelessDao  = container.wirelessDao,
+                                livePosition = liveCoord,
                             )
                             AppScreen.REPORTS  -> com.arawn.scanner.reports.ReportsScreen(
                                 wirelessDao          = container.wirelessDao,
@@ -237,11 +238,12 @@ class MainActivity : AppCompatActivity() {
                                 enrichedCsvExporter  = container.enrichedCsvExporter,
                             )
                             AppScreen.VAULT    -> VaultScreen(
-                                isUnlocked      = isVaultUnlocked,
-                                onAuthenticate  = { authenticateVault() },
-                                onWillPickFile  = { suppressVaultAutoLock = true },
-                                vaultRepository = container.vaultRepository,
-                                vaultDao        = container.vaultDao,
+                                isUnlocked         = isVaultUnlocked,
+                                onAuthenticate     = { authenticateVault() },
+                                onWillPickFile     = { suppressVaultAutoLock = true },
+                                onWillOpenExternal = { suppressVaultAutoLock = true },
+                                vaultRepository    = container.vaultRepository,
+                                vaultDao           = container.vaultDao,
                             )
                             AppScreen.DOCS     -> KnowledgeScreen(
                                 knowledgeRepository = container.knowledgeRepository,
@@ -272,6 +274,9 @@ class MainActivity : AppCompatActivity() {
             suppressVaultAutoLock = false
         } else {
             isVaultUnlocked = false
+            // Genuine background (not a file-picker / viewer round-trip): destroy any
+            // plaintext that was decrypted for viewing so it never outlives the lock.
+            container.vaultRepository.wipeViewCache()
         }
     }
 
