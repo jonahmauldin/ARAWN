@@ -21,7 +21,7 @@ object HtmlReportRenderer {
         append("<!DOCTYPE html><html lang=\"en\"><head>")
         append("<meta charset=\"UTF-8\">")
         append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-        val docTitle = data.meta.title?.let { esc(it) } ?: "Session #${data.session.sessionId}"
+        val docTitle = data.meta.title?.let { it.esc() } ?: "Session #${data.session.sessionId}"
         append("<title>ARAWN Report — $docTitle</title>")
         append("<style>"); append(CSS); append("</style>")
         append("</head><body>")
@@ -54,7 +54,7 @@ object HtmlReportRenderer {
         else
             "In Progress"
         val opTitleLine = data.meta.title?.let {
-            """<div style="font-size:20px;font-weight:700;color:#E0B341;margin-top:6px">${esc(it)}</div>"""
+            """<div style="font-size:20px;font-weight:700;color:#E0B341;margin-top:6px">${it.esc()}</div>"""
         } ?: ""
         append("""<div class="rpt-header"><div class="container">
 <div class="rpt-title">ARAWN // RF SURVEY REPORT</div>
@@ -170,13 +170,6 @@ ${statCard(data.meta.totalRecords.toString(), "Total Records")}
         append("\"exportMs\":${data.meta.exportMs},\"sessionId\":${data.meta.sessionId},")
         append("\"totalRecords\":${data.meta.totalRecords}}}")
     }
-
-    /** Minimal HTML escaping for operator-supplied free text (the report title). */
-    private fun esc(s: String): String = s
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
 
     private fun ts(ms: Long): String = TIME_FMT.format(Date(ms))
     private fun dur(ms: Long): String {
