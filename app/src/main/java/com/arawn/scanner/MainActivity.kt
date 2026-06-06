@@ -10,6 +10,9 @@ import android.os.IBinder
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -128,7 +131,27 @@ class MainActivity : AppCompatActivity() {
         container = (application as ArawnApplication).container
         setContent {
             ArawnTheme {
-                val lines = remember { mutableStateListOf<String>() }
+                // Cold-start boot screen. rememberSaveable so rotation
+                // mid-session does not replay the splash.
+                var booted by rememberSaveable { mutableStateOf(false) }
+                Crossfade(
+                    targetState = booted,
+                    animationSpec = tween(durationMillis = 380),
+                    label = "boot-gate",
+                ) { isBooted ->
+                    if (!isBooted) {
+                        BootScreen(onComplete = { booted = true })
+                        return@Crossfade
+                    }
+                    AppContent()
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun AppContent() {
+        val lines = remember { mutableStateListOf<String>() }
                 // Latest Wi-Fi snapshot, fed straight to the live spectrum chart.
                 val latestWifi = remember { mutableStateListOf<WifiObservation>() }
                 // GPS track of the active session, projected for the offline map.
@@ -253,8 +276,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-            }
-        }
     }
 
     override fun onStart() {
