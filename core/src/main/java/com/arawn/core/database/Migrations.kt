@@ -256,3 +256,47 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_sessions_missionId` ON `sessions` (`missionId`)")
     }
 }
+
+/**
+ * v4 → v5: report metadata index (Phase 4).
+ *
+ * Two changes to the `reports` table:
+ *   (a) `vaultEntryId` becomes NULLABLE — the operator chose to keep reports
+ *       plaintext in MediaStore (browser-openable) rather than vault-encrypt them,
+ *       so new reports won't reference a vault entry.
+ *   (b) New nullable `filePath` column — stores the MediaStore relative path so
+ *       the report can be found again from its DB row.
+ *
+ * SQLite can't ALTER COLUMN to drop a NOT NULL constraint, so the table is
+ * rebuilt: create the new shape, copy rows over (filePath = NULL for any pre-
+ * existing rows), drop the old table, rename. Indexes are recreated. The FK
+ * with CASCADE on `vaultEntryId` is preserved — it just doesn't fire when the
+ * column is NULL, which is the new common case.
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS `reports_new` (
+                `reportId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `missionId` INTEGER,
+                `title` TEXT NOT NULL,
+                `generatedMs` INTEGER NOT NULL,
+                `format` TEXT NOT NULL,
+                `vaultEntryId` INTEGER,
+                `filePath` TEXT,
+                FOREIGN KEY(`missionId`) REFERENCES `missions`(`missionId`) ON UPDATE NO ACTION ON DELETE SET NULL,
+                FOREIGN KEY(`vaultEntryId`) REFERENCES `vault_entries`(`vaultEntryId`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+        """.trimIndent())
+        db.execSQL("""
+            INSERT INTO `reports_new`
+                (reportId, missionId, title, generatedMs, format, vaultEntryId, filePath)
+            SELECT reportId, missionId, title, generatedMs, format, vaultEntryId, NULL
+            FROM `reports`
+        """.trimIndent())
+        db.execSQL("DROP TABLE `reports`")
+        db.execSQL("ALTER TABLE `reports_new` RENAME TO `reports`")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_reports_missionId` ON `reports` (`missionId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_reports_vaultEntryId` ON `reports` (`vaultEntryId`)")
+    }
+}

@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
 import com.arawn.core.database.ArawnDatabase
+import com.arawn.core.database.ReportEntity
+import com.arawn.core.database.ReportFormat
 import com.arawn.scanner.report.HtmlReportRenderer
 import com.arawn.scanner.report.ReportDataCollector
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +24,7 @@ class HtmlReportExporter(context: Context) {
 
     private val appContext = context.applicationContext
     private val dao = ArawnDatabase.get(appContext).wirelessDao()
+    private val reportDao = ArawnDatabase.get(appContext).reportDao()
 
     data class ExportResult(
         val success: Boolean,
@@ -64,6 +67,26 @@ class HtmlReportExporter(context: Context) {
                 "ARAWN_Report_${sessLabel}_$stamp.html"
             val path = write(name, html)
                 ?: return@runCatching ExportResult(false, "MediaStore rejected the write.")
+
+            // Phase 4: index the report so it shows up in the HISTORY tab from
+            // the DB (mission association + future filters), in addition to the
+            // existing MediaStore scan. Best-effort: a DB failure must NOT mask
+            // a successful file write — the operator's report on disk is the
+            // source of truth.
+            runCatching {
+                reportDao.insertReportWithSources(
+                    report = ReportEntity(
+                        missionId   = null,
+                        title       = safeTitle ?: "Report $sessLabel",
+                        generatedMs = System.currentTimeMillis(),
+                        format      = ReportFormat.HTML,
+                        filePath    = path,
+                    ),
+                    sessionIds = sessionIds,
+                    routeIds   = emptyList(),
+                )
+            }
+
             ExportResult(true, "Report saved → $path", path)
         }.getOrElse { e ->
             ExportResult(false, "Report error: ${e.message ?: e.javaClass.simpleName}")

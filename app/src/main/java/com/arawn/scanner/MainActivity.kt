@@ -237,6 +237,7 @@ class MainActivity : AppCompatActivity() {
                                 wirelessDao          = container.wirelessDao,
                                 htmlReportExporter   = container.htmlReportExporter,
                                 enrichedCsvExporter  = container.enrichedCsvExporter,
+                                reportDao            = container.reportDao,
                             )
                             AppScreen.VAULT    -> VaultScreen(
                                 isUnlocked         = isVaultUnlocked,

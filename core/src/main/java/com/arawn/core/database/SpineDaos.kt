@@ -216,6 +216,10 @@ interface ReportDao {
         if (routeIds.isNotEmpty()) linkRoutes(routeIds.map { ReportRouteEntity(id, it) })
         return id
     }
+
+    /** Drop the index row when its plaintext file is deleted from MediaStore. */
+    @Query("DELETE FROM reports WHERE filePath = :filePath")
+    suspend fun deleteByFilePath(filePath: String)
 }
 
 @Dao

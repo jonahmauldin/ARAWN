@@ -3,6 +3,7 @@ package com.arawn.scanner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -275,21 +277,31 @@ fun OpsScreen(
                         }
                     }
                 } else {
-                    // Layer toggle row + draw entry points.
+                    // Layer toggles (left) + DRAW group (right), joined by a slim
+                    // divider. horizontalScroll is overflow insurance: without it, an
+                    // overcrowded Row squeezes the last child to its minimum intrinsic
+                    // width — which for Text is one character — and renders the label
+                    // vertically (the "▭ ZONE button stacks letters" bug from build-50).
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        LayerChip("TRACKS", showTracks)    { showTracks    = !showTracks }
-                        LayerChip("WPT",    showWaypoints) { showWaypoints = !showWaypoints }
-                        LayerChip("ROUTES", showRoutes)    { showRoutes    = !showRoutes }
-                        LayerChip("ZONES",  showAreas)     { showAreas     = !showAreas }
-                        Spacer(Modifier.weight(1f))
-                        ToolAction("✎ ROUTE", color = Amber) {
+                        OverlayToggle("TRACKS", showTracks)    { showTracks    = !showTracks }
+                        OverlayToggle("WPT",    showWaypoints) { showWaypoints = !showWaypoints }
+                        OverlayToggle("ROUTES", showRoutes)    { showRoutes    = !showRoutes }
+                        OverlayToggle("ZONES",  showAreas)     { showAreas     = !showAreas }
+                        Box(
+                            Modifier.width(1.dp).height(18.dp)
+                                .background(Color(0xFF2A2A2A)),
+                        )
+                        DrawTool("✎ ROUTE") {
                             drawPoints.clear(); mapTool = MapTool.ROUTE
                         }
-                        ToolAction("▭ ZONE", color = Amber) {
+                        DrawTool("▭ ZONE") {
                             drawPoints.clear(); mapTool = MapTool.AREA
                         }
                     }
@@ -762,6 +774,54 @@ private fun LayerChip(label: String, active: Boolean, onClick: () -> Unit) {
         fontFamily = FontFamily.Monospace,
         fontSize   = 10.sp,
         modifier   = Modifier.clickable(onClick = onClick),
+    )
+}
+
+/**
+ * Layer-overlay toggle for the MAP toolbar — a bordered amber chip when active, a
+ * dim outlined chip when inactive. The amber border "lights up" the active state
+ * the way the terminal aesthetic already telegraphs selection elsewhere (the
+ * ToolChip pattern from MissionsScreen).
+ */
+@Composable
+private fun OverlayToggle(label: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        text       = label,
+        color      = if (active) Color.Black else Color(0xFF888888),
+        fontFamily = FontFamily.Monospace,
+        fontSize   = 10.sp,
+        modifier   = Modifier
+            .clickable(onClick = onClick)
+            .background(
+                color = if (active) Amber else Color.Transparent,
+                shape = RoundedCornerShape(3.dp),
+            )
+            .border(
+                width = 1.dp,
+                color = if (active) Amber else Color(0xFF333333),
+                shape = RoundedCornerShape(3.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+/**
+ * Geometry-create entry button (ROUTE / ZONE) — visually distinct from the overlay
+ * toggles by using the amber outline only on the icon side. Same compact bordered
+ * chip footprint so the row stays one line.
+ */
+@Composable
+private fun DrawTool(label: String, onClick: () -> Unit) {
+    Text(
+        text       = label,
+        color      = Amber,
+        fontFamily = FontFamily.Monospace,
+        fontSize   = 10.sp,
+        modifier   = Modifier
+            .clickable(onClick = onClick)
+            .background(Color(0xFF161616), RoundedCornerShape(3.dp))
+            .border(1.dp, Color(0xFF553F12), RoundedCornerShape(3.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
     )
 }
 

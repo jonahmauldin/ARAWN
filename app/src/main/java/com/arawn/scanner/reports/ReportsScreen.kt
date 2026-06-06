@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.arawn.core.database.ReportDao
 import com.arawn.core.database.SessionEntity
 import com.arawn.core.database.WirelessDao
 import com.arawn.scanner.export.EnrichedCsvExporter
@@ -87,6 +89,7 @@ fun ReportsScreen(
     wirelessDao: WirelessDao,
     htmlReportExporter: HtmlReportExporter,
     enrichedCsvExporter: EnrichedCsvExporter,
+    reportDao: ReportDao,
 ) {
     var activeTab by remember { mutableStateOf(ReportTab.GENERATE) }
     var historyKey by remember { mutableStateOf(0) }
@@ -145,6 +148,7 @@ fun ReportsScreen(
             ReportTab.HISTORY -> HistoryTab(
                 context    = context,
                 historyKey = historyKey,
+                reportDao  = reportDao,
             )
         }
     }
@@ -395,9 +399,10 @@ private fun SessionSelectRow(
 // =============================================================================
 
 @Composable
-private fun HistoryTab(context: Context, historyKey: Int) {
+private fun HistoryTab(context: Context, historyKey: Int, reportDao: ReportDao) {
     val reports        = remember { mutableStateListOf<ReportFile>() }
     var reportToDelete by remember { mutableStateOf<ReportFile?>(null) }
+    var searchQuery    by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(historyKey) {
@@ -406,30 +411,78 @@ private fun HistoryTab(context: Context, historyKey: Int) {
         reports.addAll(found)
     }
 
-    if (reports.isEmpty()) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "// no reports yet\n// generate one in the GENERATE tab",
-                color = Color(0xFF3A3A3A),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-            )
+    // Search is purely client-side over the MediaStore-derived list — instant, no
+    // extra round trip. Both the parsed operator title and the raw filename are
+    // matched so legacy untitled reports remain findable.
+    val visible = remember(reports.toList(), searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) reports.toList()
+        else reports.filter {
+            reportDisplayTitle(it.name).contains(q, ignoreCase = true) ||
+                it.name.contains(q, ignoreCase = true)
         }
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(reports, key = { it.uri.toString() }) { report ->
-                ReportFileRow(
-                    report  = report,
-                    onClick = { openReport(context, report.uri) },
-                    onDelete = { reportToDelete = report },
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Search reports", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+            placeholder = { Text("title or filename", fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+            singleLine = true,
+            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor   = Amber,
+                unfocusedBorderColor = Color(0xFF333333),
+                focusedLabelColor    = Amber,
+                unfocusedLabelColor  = Color.Gray,
+                cursorColor          = Amber,
+                focusedTextColor     = Ink,
+                unfocusedTextColor   = Ink,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+
+        if (reports.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "// no reports yet\n// generate one in the GENERATE tab",
+                    color = Color(0xFF3A3A3A),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
                 )
+            }
+        } else if (visible.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "// no reports match\n// \"$searchQuery\"",
+                    color = Color(0xFF3A3A3A),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(visible, key = { it.uri.toString() }) { report ->
+                    ReportFileRow(
+                        report  = report,
+                        onClick = { openReport(context, report.uri) },
+                        onDelete = { reportToDelete = report },
+                    )
+                }
             }
         }
     }
@@ -458,7 +511,20 @@ private fun HistoryTab(context: Context, historyKey: Int) {
                                 context.contentResolver.delete(target.uri, null, null) > 0
                             }.getOrDefault(false)
                         }
-                        if (deleted) reports.remove(target)
+                        if (deleted) {
+                            reports.remove(target)
+                            // Best-effort DB cleanup: HtmlReportExporter stores filePath
+                            // as "Documents/ARAWN/<name>", so a single LIKE on the trailing
+                            // filename finds the index row regardless of the column's
+                            // path prefix. Orphan rows are harmless if this misses.
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    reportDao.deleteByFilePath(
+                                        "${Environment.DIRECTORY_DOCUMENTS}/ARAWN/${target.name}",
+                                    )
+                                }
+                            }
+                        }
                         reportToDelete = null
                     }
                 }) {

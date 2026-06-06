@@ -322,8 +322,18 @@ data class ReportEntity(
     val title: String,
     val generatedMs: Long,
     val format: ReportFormat,
-    /** The generated file's encrypted blob in vault_entries. */
-    val vaultEntryId: Long,
+    /**
+     * Optional vault-encrypted blob. Phase 4 (v4→v5) relaxed this to NULL because
+     * the operator chose to keep reports plaintext in MediaStore (browser-openable);
+     * future vault-backed reports can still populate it.
+     */
+    val vaultEntryId: Long? = null,
+    /**
+     * Plaintext file location for browser-openable reports (Phase 4). Typically the
+     * MediaStore relative path, e.g. `Documents/ARAWN/Walmart scan (ARAWN S3 …).html`.
+     * Null for legacy vault-backed reports.
+     */
+    val filePath: String? = null,
 )
 
 /** Which recon sessions a report drew from (normalized join table). */
