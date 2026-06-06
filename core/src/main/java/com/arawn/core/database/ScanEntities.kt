@@ -171,3 +171,47 @@ data class CoordinatePair(
     val longitude: Double,
     val timestampMs: Long,
 )
+
+/**
+ * Per-BSSID Wi-Fi aggregate returned by [WirelessDao.getWifiAggregates].
+ *
+ * SQLite does the GROUP BY so only one row per unique BSSID is returned for the
+ * whole session — no matter how many GPS windows observed it. This avoids
+ * loading the full [LogEntryWithSignals] object graph (which can be hundreds of
+ * thousands of entities for a long scan) into the JVM heap.
+ */
+data class WifiAggregate(
+    val bssid: String,
+    val ssid: String,
+    val bestRssi: Int,
+    val frequencyMhz: Int,
+    val capabilities: String,
+    val vendorName: String?,
+    val deviceClass: String?,
+    val classConfidence: Int?,
+    val classStatus: String?,
+    val lat: Double,
+    val lon: Double,
+    val firstMs: Long,
+    val lastMs: Long,
+    val seenCount: Int,
+)
+
+/**
+ * Per-MAC BLE aggregate returned by [WirelessDao.getBleAggregates].
+ * Same memory-saving rationale as [WifiAggregate].
+ */
+data class BleAggregate(
+    val macAddress: String,
+    val name: String?,
+    val bestRssi: Int,
+    val vendorName: String?,
+    val deviceClass: String?,
+    val classConfidence: Int?,
+    val classStatus: String?,
+    val lat: Double,
+    val lon: Double,
+    val firstMs: Long,
+    val lastMs: Long,
+    val seenCount: Int,
+)

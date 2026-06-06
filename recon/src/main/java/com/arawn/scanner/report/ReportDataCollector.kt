@@ -19,6 +19,12 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
      * observation with the strongest RSSI and the most confident classification.
      * Track points from all sessions are combined and sorted chronologically.
      *
+     * Uses SQL GROUP BY aggregate queries ([WirelessDao.getWifiAggregates] /
+     * [WirelessDao.getBleAggregates]) instead of loading the full
+     * [com.arawn.core.database.LogEntryWithSignals] entity graph. For a long scan
+     * the full graph can be hundreds of thousands of objects and exhaust the ART
+     * heap; the aggregate queries return at most a few hundred rows.
+     *
      * Returns null only when every requested session is missing or empty.
      */
     suspend fun collectMultiple(
@@ -27,7 +33,8 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
     ): ReportData? = withContext(Dispatchers.IO) {
         if (sessionIds.isEmpty()) return@withContext null
 
-        data class WifiAgg(
+        // Mutable holders for cross-session merging (one entry per BSSID / MAC).
+        data class WifiEntry(
             var ssid: String, var bssid: String,
             var bestRssi: Int, var frequencyMhz: Int,
             var capabilities: String, var vendor: String,
@@ -35,7 +42,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
             var lat: Double, var lon: Double,
             var firstMs: Long, var lastMs: Long, var count: Int,
         )
-        data class BleAgg(
+        data class BleEntry(
             var name: String?, var mac: String,
             var bestRssi: Int, var vendor: String,
             var deviceClass: String, var classConfidence: Int, var classStatus: String,
@@ -43,84 +50,94 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
             var firstMs: Long, var lastMs: Long, var count: Int,
         )
 
-        val wifiAggs   = LinkedHashMap<String, WifiAgg>()
-        val bleAggs    = LinkedHashMap<String, BleAgg>()
-        val track      = ArrayList<TrackPoint>()
+        val wifiMap        = LinkedHashMap<String, WifiEntry>()
+        val bleMap         = LinkedHashMap<String, BleEntry>()
+        val track          = ArrayList<TrackPoint>()
         val validSessions  = ArrayList<ReportSession>()
         var totalRecords   = 0
 
         for (sessionId in sessionIds) {
-            val sessionContainer = dao.getSessionWithEntries(sessionId) ?: continue
-            val entries = dao.getEntriesWithSignals(sessionId)
-            if (entries.isEmpty()) continue
+            // Lightweight aggregate queries — one row per unique BSSID / MAC.
+            val wifiAggs = dao.getWifiAggregates(sessionId)
+            val bleAggs  = dao.getBleAggregates(sessionId)
+            if (wifiAggs.isEmpty() && bleAggs.isEmpty()) continue
 
-            val session = sessionContainer.session
+            val session = dao.getSession(sessionId) ?: continue
             validSessions.add(
                 ReportSession(session.sessionId, session.startTime, session.endTime, session.pointsCollected)
             )
 
-            for (e in entries) {
-                val ts  = e.entry.timestampMs
-                val lat = e.entry.latitude
-                val lon = e.entry.longitude
-                track.add(TrackPoint(lat, lon, ts, sessionId))
-                totalRecords += e.wifi.size + e.ble.size
+            // GPS track — coordinate-only projection, already cheap.
+            dao.getSessionCoordinates(sessionId).forEach { c ->
+                track.add(TrackPoint(c.latitude, c.longitude, c.timestampMs, sessionId))
+            }
 
-                for (w in e.wifi) {
-                    val agg = wifiAggs[w.bssid]
-                    if (agg == null) {
-                        wifiAggs[w.bssid] = WifiAgg(
-                            w.ssid, w.bssid, w.rssiDbm, w.frequencyMhz,
-                            w.capabilities, w.vendorName ?: "Unknown",
-                            w.deviceClass ?: "UNKNOWN", w.classConfidence ?: 0, w.classStatus ?: "UNKNOWN",
-                            lat, lon, ts, ts, 1,
-                        )
-                    } else {
-                        if (w.rssiDbm > agg.bestRssi) {
-                            agg.bestRssi = w.rssiDbm; agg.lat = lat; agg.lon = lon
-                            val vn = w.vendorName
-                            if (!vn.isNullOrBlank() && vn != "Unknown Vendor") agg.vendor = vn
-                        }
-                        if ((w.classConfidence ?: 0) > agg.classConfidence) {
-                            agg.deviceClass    = w.deviceClass    ?: agg.deviceClass
-                            agg.classConfidence = w.classConfidence ?: agg.classConfidence
-                            agg.classStatus    = w.classStatus    ?: agg.classStatus
-                        }
-                        if (ts < agg.firstMs) agg.firstMs = ts
-                        if (ts > agg.lastMs)  agg.lastMs  = ts
-                        agg.count++
+            totalRecords += wifiAggs.sumOf { it.seenCount } + bleAggs.sumOf { it.seenCount }
+
+            for (w in wifiAggs) {
+                val existing = wifiMap[w.bssid]
+                if (existing == null) {
+                    wifiMap[w.bssid] = WifiEntry(
+                        w.ssid, w.bssid, w.bestRssi, w.frequencyMhz,
+                        w.capabilities, w.vendorName ?: "Unknown",
+                        w.deviceClass ?: "UNKNOWN", w.classConfidence ?: 0, w.classStatus ?: "UNKNOWN",
+                        w.lat, w.lon, w.firstMs, w.lastMs, w.seenCount,
+                    )
+                } else {
+                    if (w.bestRssi > existing.bestRssi) {
+                        existing.bestRssi = w.bestRssi; existing.lat = w.lat; existing.lon = w.lon
+                        val vn = w.vendorName
+                        if (!vn.isNullOrBlank() && vn != "Unknown Vendor") existing.vendor = vn
                     }
+                    if ((w.classConfidence ?: 0) > existing.classConfidence) {
+                        existing.deviceClass     = w.deviceClass    ?: existing.deviceClass
+                        existing.classConfidence = w.classConfidence ?: existing.classConfidence
+                        existing.classStatus     = w.classStatus    ?: existing.classStatus
+                    }
+                    if (w.firstMs < existing.firstMs) existing.firstMs = w.firstMs
+                    if (w.lastMs  > existing.lastMs)  existing.lastMs  = w.lastMs
+                    existing.count += w.seenCount
                 }
+            }
 
-                for (b in e.ble) {
-                    val agg = bleAggs[b.macAddress]
-                    if (agg == null) {
-                        bleAggs[b.macAddress] = BleAgg(
-                            b.name, b.macAddress, b.rssiDbm,
-                            b.vendorName ?: "Unknown",
-                            b.deviceClass ?: "UNKNOWN", b.classConfidence ?: 0, b.classStatus ?: "UNKNOWN",
-                            lat, lon, ts, ts, 1,
-                        )
-                    } else {
-                        if (b.rssiDbm > agg.bestRssi) { agg.bestRssi = b.rssiDbm; agg.lat = lat; agg.lon = lon }
-                        if (b.name != null && agg.name == null) agg.name = b.name
-                        if ((b.classConfidence ?: 0) > agg.classConfidence) {
-                            agg.deviceClass    = b.deviceClass    ?: agg.deviceClass
-                            agg.classConfidence = b.classConfidence ?: agg.classConfidence
-                            agg.classStatus    = b.classStatus    ?: agg.classStatus
-                        }
-                        if (ts < agg.firstMs) agg.firstMs = ts
-                        if (ts > agg.lastMs)  agg.lastMs  = ts
-                        agg.count++
+            for (b in bleAggs) {
+                val existing = bleMap[b.macAddress]
+                if (existing == null) {
+                    bleMap[b.macAddress] = BleEntry(
+                        b.name, b.macAddress, b.bestRssi,
+                        b.vendorName ?: "Unknown",
+                        b.deviceClass ?: "UNKNOWN", b.classConfidence ?: 0, b.classStatus ?: "UNKNOWN",
+                        b.lat, b.lon, b.firstMs, b.lastMs, b.seenCount,
+                    )
+                } else {
+                    if (b.bestRssi > existing.bestRssi) { existing.bestRssi = b.bestRssi; existing.lat = b.lat; existing.lon = b.lon }
+                    if (b.name != null && existing.name == null) existing.name = b.name
+                    if ((b.classConfidence ?: 0) > existing.classConfidence) {
+                        existing.deviceClass     = b.deviceClass    ?: existing.deviceClass
+                        existing.classConfidence = b.classConfidence ?: existing.classConfidence
+                        existing.classStatus     = b.classStatus    ?: existing.classStatus
                     }
+                    if (b.firstMs < existing.firstMs) existing.firstMs = b.firstMs
+                    if (b.lastMs  > existing.lastMs)  existing.lastMs  = b.lastMs
+                    existing.count += b.seenCount
                 }
             }
         }
 
         if (validSessions.isEmpty()) return@withContext null
 
-        // Sort track chronologically across all sessions
+        // Sort track chronologically across all sessions, then downsample.
+        // The canvas map is at most ~800 px wide; 1 000 points is more than enough
+        // to draw a faithful path and avoids serialising thousands of JSON objects.
         track.sortBy { it.tsMs }
+        val MAX_TRACK = 1_000
+        val finalTrack: List<TrackPoint> = if (track.size > MAX_TRACK) {
+            val stride = track.size / MAX_TRACK
+            ArrayList<TrackPoint>(MAX_TRACK + 1).also { out ->
+                track.forEachIndexed { i, pt -> if (i % stride == 0) out.add(pt) }
+                if (out.last() != track.last()) out.add(track.last())
+            }
+        } else track
 
         val appVersion = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
@@ -128,7 +145,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
 
         ReportData(
             sessions = validSessions,
-            wifi = wifiAggs.values.map { a ->
+            wifi = wifiMap.values.map { a ->
                 WifiEntry(
                     ssid = a.ssid, bssid = a.bssid,
                     bestRssi = a.bestRssi, frequencyMhz = a.frequencyMhz,
@@ -144,7 +161,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                     firstSeenMs = a.firstMs, lastSeenMs = a.lastMs, seenCount = a.count,
                 )
             }.sortedByDescending { it.bestRssi },
-            ble = bleAggs.values.map { a ->
+            ble = bleMap.values.map { a ->
                 BleEntry(
                     name = a.name ?: "(unnamed)", mac = a.mac,
                     bestRssi = a.bestRssi, vendor = a.vendor,
@@ -155,7 +172,7 @@ class ReportDataCollector(private val dao: WirelessDao, private val context: Con
                     firstSeenMs = a.firstMs, lastSeenMs = a.lastMs, seenCount = a.count,
                 )
             }.sortedByDescending { it.bestRssi },
-            track = track,
+            track = finalTrack,
             meta = ReportMeta(
                 appVersion = appVersion,
                 deviceModel = Build.MODEL,

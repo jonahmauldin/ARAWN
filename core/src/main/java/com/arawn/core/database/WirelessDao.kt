@@ -111,6 +111,70 @@ abstract class WirelessDao {
     @Query("SELECT sessionId FROM sessions ORDER BY startTime DESC LIMIT 1")
     abstract suspend fun getLatestSessionId(): Long?
 
+    /** Single session entity, or null if not found. */
+    @Query("SELECT * FROM sessions WHERE sessionId = :sessionId")
+    abstract suspend fun getSession(sessionId: Long): SessionEntity?
+
+    /**
+     * Per-BSSID Wi-Fi aggregate for one session — SQLite GROUP BY means one row
+     * per unique BSSID regardless of how many GPS windows observed it.
+     *
+     * Use this instead of [getEntriesWithSignals] when building reports: for a
+     * 40-minute scan the full entity graph can be hundreds of thousands of objects
+     * and exceed the ART heap limit; this query returns at most a few hundred rows.
+     *
+     * Column aliases (bestRssi, lat, lon, firstMs, lastMs, seenCount) map
+     * directly to [WifiAggregate] property names.
+     */
+    @Query("""
+        SELECT
+            w.bssid,
+            w.ssid,
+            MAX(w.rssiDbm)          AS bestRssi,
+            w.frequencyMhz,
+            w.capabilities,
+            w.vendorName,
+            w.deviceClass,
+            MAX(w.classConfidence)  AS classConfidence,
+            w.classStatus,
+            e.latitude              AS lat,
+            e.longitude             AS lon,
+            MIN(e.timestampMs)      AS firstMs,
+            MAX(e.timestampMs)      AS lastMs,
+            COUNT(*)                AS seenCount
+        FROM wifi_access_points w
+        INNER JOIN log_entries e ON w.entryId = e.entryId
+        WHERE e.sessionId = :sessionId
+        GROUP BY w.bssid
+    """)
+    abstract suspend fun getWifiAggregates(sessionId: Long): List<WifiAggregate>
+
+    /**
+     * Per-MAC BLE aggregate for one session. Same memory rationale as
+     * [getWifiAggregates]. [BleAggregate.name] uses MAX() so a non-null device
+     * name is preferred over null when both appear across observations.
+     */
+    @Query("""
+        SELECT
+            b.macAddress,
+            MAX(b.name)             AS name,
+            MAX(b.rssiDbm)          AS bestRssi,
+            b.vendorName,
+            b.deviceClass,
+            MAX(b.classConfidence)  AS classConfidence,
+            b.classStatus,
+            e.latitude              AS lat,
+            e.longitude             AS lon,
+            MIN(e.timestampMs)      AS firstMs,
+            MAX(e.timestampMs)      AS lastMs,
+            COUNT(*)                AS seenCount
+        FROM ble_devices b
+        INNER JOIN log_entries e ON b.entryId = e.entryId
+        WHERE e.sessionId = :sessionId
+        GROUP BY b.macAddress
+    """)
+    abstract suspend fun getBleAggregates(sessionId: Long): List<BleAggregate>
+
     // ---- Mission linking (Phase B) -------------------------------------------
 
     /** Attach or detach a session from a mission (pass null to clear). */

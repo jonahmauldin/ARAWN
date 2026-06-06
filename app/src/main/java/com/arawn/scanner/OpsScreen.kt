@@ -245,14 +245,18 @@ fun OpsScreen(
         when (opsView) {
 
             // ── MAP ──────────────────────────────────────────────────────────
-            OpsView.MAP -> {
+            OpsView.MAP -> Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 val drawing = mapTool == MapTool.ROUTE || mapTool == MapTool.AREA
                 if (drawing) {
-                    // Geometry-drawing toolbar (replaces the layer row while drawing).
+                    // Geometry-drawing toolbar — horizontalScroll prevents the CANCEL
+                    // button from being clipped at large font scales.
                     val isArea = mapTool == MapTool.AREA
                     val minPts = if (isArea) 3 else 2
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -262,7 +266,6 @@ fun OpsScreen(
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 11.sp,
                         )
-                        Spacer(Modifier.weight(1f))
                         ToolAction("UNDO", enabled = drawPoints.isNotEmpty()) {
                             if (drawPoints.isNotEmpty()) drawPoints.removeAt(drawPoints.lastIndex)
                         }
