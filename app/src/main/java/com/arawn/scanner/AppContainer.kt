@@ -15,6 +15,7 @@ import com.arawn.scanner.export.DataLogBackupExporter
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.export.HtmlReportExporter
 import com.arawn.scanner.knowledge.KnowledgeRepository
+import com.arawn.scanner.missions.MissionRepository
 import com.arawn.scanner.vault.VaultRepository
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import java.io.File
@@ -81,6 +82,11 @@ class AppContainer(context: Context) {
     // Phase H: Knowledge Base
     val knowledgeRepository: KnowledgeRepository by lazy {
         KnowledgeRepository(appContext, documentDao, vaultDao, vaultRepository)
+    }
+
+    // Mission Integration: lifecycle delete with cross-source cascade
+    val missionRepository: MissionRepository by lazy {
+        MissionRepository(missionDao, geoDao, wirelessDao, attachmentDao, vaultDao, vaultRepository)
     }
 
     private companion object {

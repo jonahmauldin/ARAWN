@@ -227,10 +227,11 @@ class MainActivity : AppCompatActivity() {
                                 onReport        = { generateHtmlReport() },
                             )
                             AppScreen.MISSIONS -> com.arawn.scanner.missions.MissionsScreen(
-                                missionDao   = container.missionDao,
-                                geoDao       = container.geoDao,
-                                wirelessDao  = container.wirelessDao,
-                                livePosition = liveCoord,
+                                missionDao        = container.missionDao,
+                                geoDao            = container.geoDao,
+                                wirelessDao       = container.wirelessDao,
+                                missionRepository = container.missionRepository,
+                                livePosition      = liveCoord,
                             )
                             AppScreen.REPORTS  -> com.arawn.scanner.reports.ReportsScreen(
                                 wirelessDao          = container.wirelessDao,

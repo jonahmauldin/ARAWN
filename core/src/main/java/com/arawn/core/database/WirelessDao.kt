@@ -120,4 +120,12 @@ abstract class WirelessDao {
     /** Live list of sessions belonging to a mission, newest first. */
     @Query("SELECT * FROM sessions WHERE missionId = :missionId ORDER BY startTime DESC")
     abstract fun observeSessionsForMission(missionId: Long): Flow<List<SessionEntity>>
+
+    /**
+     * Detach every session linked to [missionId]. Used when a mission is deleted:
+     * SessionEntity.missionId is a soft reference (no DB FK to SET_NULL it), so the
+     * link must be cleared explicitly or sessions would point at a ghost mission.
+     */
+    @Query("UPDATE sessions SET missionId = NULL WHERE missionId = :missionId")
+    abstract suspend fun clearMissionFromSessions(missionId: Long)
 }

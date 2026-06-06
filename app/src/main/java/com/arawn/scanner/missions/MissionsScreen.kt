@@ -113,6 +113,7 @@ fun MissionsScreen(
     missionDao: MissionDao,
     geoDao: GeoDao,
     wirelessDao: WirelessDao,
+    missionRepository: MissionRepository,
     livePosition: CoordinatePair? = null,
 ) {
     var selectedMissionId by remember { mutableStateOf<Long?>(null) }
@@ -128,6 +129,7 @@ fun MissionsScreen(
             missionDao = missionDao,
             geoDao = geoDao,
             wirelessDao = wirelessDao,
+            missionRepository = missionRepository,
             livePosition = livePosition,
             onBack = { selectedMissionId = null },
         )
@@ -144,11 +146,15 @@ private fun MissionListContent(
     onSelectMission: (Long) -> Unit,
 ) {
     val missions = remember { mutableStateListOf<MissionEntity>() }
+    var showArchived by remember { mutableStateOf(false) }
     var showNewDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) {
-        missionDao.observeActiveMissions().collect { list ->
+    // Re-subscribes whenever the tab flips: active list vs. archived list.
+    LaunchedEffect(showArchived) {
+        val flow = if (showArchived) missionDao.observeArchivedMissions()
+                   else missionDao.observeActiveMissions()
+        flow.collect { list ->
             missions.clear()
             missions.addAll(list)
         }
@@ -173,12 +179,23 @@ private fun MissionListContent(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = "${missions.size} active",
+                text = "${missions.size} ${if (showArchived) "archived" else "active"}",
                 color = Color.Gray,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
             )
         }
+
+        // Active / archived tab row
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            MissionTab("ACTIVE",   !showArchived) { showArchived = false }
+            MissionTab("ARCHIVED",  showArchived) { showArchived = true }
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1A1A1A)))
 
         if (missions.isEmpty()) {
             Box(
@@ -188,7 +205,8 @@ private fun MissionListContent(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "// no active missions\n// create one below",
+                    text = if (showArchived) "// no archived missions"
+                           else "// no active missions\n// create one below",
                     color = Color(0xFF3A3A3A),
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
@@ -208,19 +226,22 @@ private fun MissionListContent(
             }
         }
 
-        Button(
-            onClick = { showNewDialog = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
-        ) {
-            Text(
-                text = "+ NEW MISSION",
-                fontFamily = FontFamily.Monospace,
-                color = Amber,
-                fontSize = 13.sp,
-            )
+        // Creation is only meaningful on the active list.
+        if (!showArchived) {
+            Button(
+                onClick = { showNewDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161616)),
+            ) {
+                Text(
+                    text = "+ NEW MISSION",
+                    fontFamily = FontFamily.Monospace,
+                    color = Amber,
+                    fontSize = 13.sp,
+                )
+            }
         }
     }
 
@@ -280,6 +301,17 @@ private fun MissionCard(mission: MissionEntity, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun MissionTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = "[ $label ]",
+        color = if (selected) Amber else Color(0xFF333333),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}
+
 // =============================================================================
 // MISSION DETAIL
 // =============================================================================
@@ -290,6 +322,7 @@ private fun MissionDetailContent(
     missionDao: MissionDao,
     geoDao: GeoDao,
     wirelessDao: WirelessDao,
+    missionRepository: MissionRepository,
     livePosition: CoordinatePair?,
     onBack: () -> Unit,
 ) {
@@ -300,13 +333,22 @@ private fun MissionDetailContent(
     val linkedSessions  = remember { mutableStateListOf<SessionEntity>() }
     val allSessions     = remember { mutableStateListOf<SessionEntity>() }
 
+    // Global (unassigned) geo objects — candidates for the LINK EXISTING picker.
+    val globalWaypoints = remember { mutableStateListOf<WaypointEntity>() }
+    val globalRoutes    = remember { mutableStateListOf<RouteWithPoints>() }
+    val globalAreas     = remember { mutableStateListOf<AreaOverlayEntity>() }
+
     var showAddItemDialog     by remember { mutableStateOf(false) }
     var showAddWaypointDialog by remember { mutableStateOf(false) }
     var showTagSessionDialog  by remember { mutableStateOf(false) }
+    var showLinkObjectsDialog by remember { mutableStateOf(false) }
     var itemToDelete          by remember { mutableStateOf<MissionItemEntity?>(null) }
     var waypointToDelete      by remember { mutableStateOf<WaypointEntity?>(null) }
     var sessionToUntag        by remember { mutableStateOf<SessionEntity?>(null) }
     var showArchiveConfirm    by remember { mutableStateOf(false) }
+    var showRestoreConfirm    by remember { mutableStateOf(false) }
+    var showEditDialog        by remember { mutableStateOf(false) }
+    var showDeleteDialog      by remember { mutableStateOf(false) }
 
     // ── Planner map state ──────────────────────────────────────────────────
     var mapTool          by remember { mutableStateOf(MapTool.NONE) }
@@ -353,6 +395,27 @@ private fun MissionDetailContent(
             allSessions.addAll(list)
         }
     }
+    // Global geo pools for the LINK EXISTING picker. Waypoints have a dedicated
+    // global query; routes/zones reuse the Ops "observe all" feeds, filtered to
+    // the unassigned ones in-memory (no extra DAO method, no schema change).
+    LaunchedEffect(Unit) {
+        geoDao.observeGlobalWaypoints().collect { list ->
+            globalWaypoints.clear()
+            globalWaypoints.addAll(list)
+        }
+    }
+    LaunchedEffect(Unit) {
+        geoDao.observeAllRoutesWithPoints().collect { list ->
+            globalRoutes.clear()
+            globalRoutes.addAll(list.filter { it.route.missionId == null })
+        }
+    }
+    LaunchedEffect(Unit) {
+        geoDao.observeAllAreas().collect { list ->
+            globalAreas.clear()
+            globalAreas.addAll(list.filter { it.missionId == null })
+        }
+    }
 
     val mission = missionWithItems?.mission
     val missionItems = missionWithItems?.items ?: emptyList()
@@ -382,7 +445,26 @@ private fun MissionDetailContent(
                 color = Ink,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
+                modifier = Modifier.weight(1f),
             )
+            if (mission != null) {
+                if (mission.archived) {
+                    Text(
+                        text = "⊗ ARCHIVED",
+                        color = Color(0xFF555555),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(
+                    text = "✎ EDIT",
+                    color = Amber,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable { showEditDialog = true },
+                )
+            }
         }
 
         if (mission == null) {
@@ -615,7 +697,11 @@ private fun MissionDetailContent(
                 SectionHeader("// WAYPOINTS  (${waypoints.size})")
             }
             items(waypoints, key = { "wpt-${it.waypointId}" }) { wp ->
-                WaypointRow(waypoint = wp, onDelete = { waypointToDelete = wp })
+                WaypointRow(
+                    waypoint = wp,
+                    onDetach = { scope.launch { geoDao.updateWaypoint(wp.copy(missionId = null)) } },
+                    onDelete = { waypointToDelete = wp },
+                )
             }
             item {
                 AddRowButton("+ ADD WAYPOINT") { showAddWaypointDialog = true }
@@ -627,7 +713,11 @@ private fun MissionDetailContent(
                 SectionHeader("// ROUTES  (${routes.size})")
             }
             items(routes, key = { "rte-${it.route.routeId}" }) { rw ->
-                RouteRow(route = rw, onClick = { editingRoute = rw.route })
+                RouteRow(
+                    route = rw,
+                    onDetach = { scope.launch { geoDao.updateRoute(rw.route.copy(missionId = null)) } },
+                    onClick = { editingRoute = rw.route },
+                )
             }
             item {
                 HintRow("draw routes with the ✎ ROUTE tool on the map")
@@ -639,11 +729,22 @@ private fun MissionDetailContent(
                 SectionHeader("// AREAS / ZONES  (${areas.size})")
             }
             items(areas, key = { "area-${it.areaId}" }) { area ->
-                AreaRow(area = area, onClick = { editingArea = area })
+                AreaRow(
+                    area = area,
+                    onDetach = { scope.launch { geoDao.updateArea(area.copy(missionId = null)) } },
+                    onClick = { editingArea = area },
+                )
             }
             item {
                 HintRow("highlight zones with the ▭ AREA tool on the map")
                 Spacer(Modifier.height(8.dp))
+            }
+
+            // ── LINK EXISTING OBJECTS ─────────────────────────────────────
+            // Pull global (unassigned) pins/routes/zones into this mission.
+            item {
+                AddRowButton("+ LINK EXISTING OBJECT") { showLinkObjectsDialog = true }
+                Spacer(Modifier.height(12.dp))
             }
 
             // ── LINKED RECON SESSIONS ─────────────────────────────────────
@@ -658,15 +759,43 @@ private fun MissionDetailContent(
                 Spacer(Modifier.height(12.dp))
             }
 
-            // ── ARCHIVE ───────────────────────────────────────────────────
+            // ── LIFECYCLE ─────────────────────────────────────────────────
             item {
+                if (mission.archived) {
+                    Button(
+                        onClick = { showRestoreConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A1505)),
+                    ) {
+                        Text(
+                            text = "↺ RESTORE MISSION",
+                            fontFamily = FontFamily.Monospace,
+                            color = TerminalGreen,
+                            fontSize = 12.sp,
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = { showArchiveConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15110A)),
+                    ) {
+                        Text(
+                            text = "⊗ ARCHIVE MISSION",
+                            fontFamily = FontFamily.Monospace,
+                            color = Amber,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
                 Button(
-                    onClick = { showArchiveConfirm = true },
+                    onClick = { showDeleteDialog = true },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A0A0A)),
                 ) {
                     Text(
-                        text = "⊗ ARCHIVE MISSION",
+                        text = "⌫ DELETE MISSION",
                         fontFamily = FontFamily.Monospace,
                         color = DimRed,
                         fontSize = 12.sp,
@@ -786,6 +915,77 @@ private fun MissionDetailContent(
                 }
             },
             onDismiss = { showArchiveConfirm = false },
+        )
+    }
+
+    if (showRestoreConfirm && mission != null) {
+        ConfirmDialog(
+            message = "Restore \"${mission.name}\" to the active list?",
+            confirmLabel = "RESTORE",
+            confirmColor = TerminalGreen,
+            onConfirm = {
+                scope.launch {
+                    missionDao.updateMission(
+                        mission.copy(archived = false, updatedMs = System.currentTimeMillis())
+                    )
+                    showRestoreConfirm = false
+                    onBack()
+                }
+            },
+            onDismiss = { showRestoreConfirm = false },
+        )
+    }
+
+    if (showEditDialog && mission != null) {
+        EditMissionDialog(
+            initialName        = mission.name,
+            initialDescription = mission.description ?: "",
+            onConfirm = { name, desc ->
+                scope.launch {
+                    missionDao.updateMission(
+                        mission.copy(
+                            name        = name,
+                            description = desc.ifBlank { null },
+                            updatedMs   = System.currentTimeMillis(),
+                        )
+                    )
+                    showEditDialog = false
+                }
+            },
+            onDismiss = { showEditDialog = false },
+        )
+    }
+
+    if (showDeleteDialog && mission != null) {
+        DeleteMissionDialog(
+            missionName = mission.name,
+            onDetachAndDelete = {
+                scope.launch {
+                    missionRepository.deleteDetachObjects(mission)
+                    showDeleteDialog = false
+                    onBack()
+                }
+            },
+            onDeleteAll = {
+                scope.launch {
+                    missionRepository.deleteWithObjects(mission)
+                    showDeleteDialog = false
+                    onBack()
+                }
+            },
+            onDismiss = { showDeleteDialog = false },
+        )
+    }
+
+    if (showLinkObjectsDialog) {
+        LinkObjectsDialog(
+            waypoints = globalWaypoints.toList(),
+            routes    = globalRoutes.toList(),
+            areas     = globalAreas.toList(),
+            onLinkWaypoint = { wp -> scope.launch { geoDao.updateWaypoint(wp.copy(missionId = missionId)) } },
+            onLinkRoute    = { rt -> scope.launch { geoDao.updateRoute(rt.copy(missionId = missionId)) } },
+            onLinkArea     = { ar -> scope.launch { geoDao.updateArea(ar.copy(missionId = missionId)) } },
+            onDismiss      = { showLinkObjectsDialog = false },
         )
     }
 
@@ -982,7 +1182,11 @@ private fun ItemRow(
 }
 
 @Composable
-private fun WaypointRow(waypoint: WaypointEntity, onDelete: () -> Unit) {
+private fun WaypointRow(
+    waypoint: WaypointEntity,
+    onDetach: () -> Unit,
+    onDelete: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1008,6 +1212,8 @@ private fun WaypointRow(waypoint: WaypointEntity, onDelete: () -> Unit) {
                 fontSize = 10.sp,
             )
         }
+        DetachGlyph(onDetach)
+        Spacer(Modifier.width(10.dp))
         Text(
             text = "[×]",
             color = Color(0xFF3A1A1A),
@@ -1016,6 +1222,19 @@ private fun WaypointRow(waypoint: WaypointEntity, onDelete: () -> Unit) {
             modifier = Modifier.clickable(onClick = onDelete),
         )
     }
+}
+
+/** Compact "pop out to global" affordance — clears the object's missionId so it
+ *  leaves the mission and becomes a global object (visible in OPS). */
+@Composable
+private fun DetachGlyph(onDetach: () -> Unit) {
+    Text(
+        text = "[↗]",
+        color = Color(0xFF6E5A22),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        modifier = Modifier.clickable(onClick = onDetach),
+    )
 }
 
 @Composable
@@ -1278,6 +1497,8 @@ private fun ConfirmDialog(
     message: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    confirmLabel: String = "CONFIRM",
+    confirmColor: Color = DimRed,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1290,7 +1511,7 @@ private fun ConfirmDialog(
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("CONFIRM", fontFamily = FontFamily.Monospace, color = DimRed)
+                Text(confirmLabel, fontFamily = FontFamily.Monospace, color = confirmColor)
             }
         },
         dismissButton = {
@@ -1299,6 +1520,220 @@ private fun ConfirmDialog(
             }
         },
     )
+}
+
+/** Edit a mission's name + description (Phase 2 metadata edit). */
+@Composable
+private fun EditMissionDialog(
+    initialName: String,
+    initialDescription: String,
+    onConfirm: (name: String, description: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    var desc by remember { mutableStateOf(initialDescription) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text("EDIT MISSION", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TerminalTextField(value = name, label = "NAME (required)", onValueChange = { name = it })
+                TerminalTextField(value = desc, label = "DESCRIPTION (optional)", onValueChange = { desc = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim(), desc.trim()) },
+                enabled = name.isNotBlank(),
+            ) {
+                Text("SAVE", fontFamily = FontFamily.Monospace, color = TerminalGreen)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+/**
+ * Hard-delete chooser (Phase 2). Two destructive paths — detach the mission's geo
+ * objects to global, or delete them with the mission. Sessions + reports are always
+ * preserved (just unlinked), spelled out so the choice is unambiguous.
+ */
+@Composable
+private fun DeleteMissionDialog(
+    missionName: String,
+    onDetachAndDelete: () -> Unit,
+    onDeleteAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text("DELETE MISSION", fontFamily = FontFamily.Monospace, color = DimRed, fontSize = 14.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Delete \"$missionName\"? This cannot be undone.",
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                )
+                Text(
+                    text = "Recon sessions and reports are always kept — only unlinked from this mission.",
+                    color = Color(0xFF777777),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                DeleteChoice(
+                    title = "⊘ DETACH OBJECTS, DELETE MISSION",
+                    subtitle = "Keep waypoints, routes & zones as global objects.",
+                    titleColor = Amber,
+                    containerColor = Color(0xFF15110A),
+                    onClick = onDetachAndDelete,
+                )
+                DeleteChoice(
+                    title = "⌫ DELETE MISSION & ALL OBJECTS",
+                    subtitle = "Also permanently delete its waypoints, routes & zones.",
+                    titleColor = DimRed,
+                    containerColor = Color(0xFF1A0A0A),
+                    onClick = onDeleteAll,
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun DeleteChoice(
+    title: String,
+    subtitle: String,
+    titleColor: Color,
+    containerColor: Color,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(containerColor, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
+        Text(title, color = titleColor, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Spacer(Modifier.height(2.dp))
+        Text(subtitle, color = Color(0xFF777777), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+    }
+}
+
+/**
+ * Pick an existing GLOBAL (unassigned) waypoint / route / zone to attach to this
+ * mission (Phase 3). Stays open so several can be linked in one pass — linked
+ * objects drop out of the list as the global pools refresh.
+ */
+@Composable
+private fun LinkObjectsDialog(
+    waypoints: List<WaypointEntity>,
+    routes: List<RouteWithPoints>,
+    areas: List<AreaOverlayEntity>,
+    onLinkWaypoint: (WaypointEntity) -> Unit,
+    onLinkRoute: (RouteEntity) -> Unit,
+    onLinkArea: (AreaOverlayEntity) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val empty = waypoints.isEmpty() && routes.isEmpty() && areas.isEmpty()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelBlack,
+        title = {
+            Text("LINK EXISTING OBJECT", fontFamily = FontFamily.Monospace, color = Amber, fontSize = 14.sp)
+        },
+        text = {
+            if (empty) {
+                Text(
+                    text = "// no unassigned global objects\n// drop pins or draw routes / zones in OPS first",
+                    color = Color(0xFF3A3A3A),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                )
+            } else {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    if (waypoints.isNotEmpty()) {
+                        SectionHeader("// WAYPOINTS")
+                        waypoints.forEach { wp ->
+                            LinkRow(
+                                glyph = "◆",
+                                name = wp.name,
+                                sublabel = wp.type.displayLabel(),
+                                onClick = { onLinkWaypoint(wp) },
+                            )
+                        }
+                    }
+                    if (routes.isNotEmpty()) {
+                        SectionHeader("// ROUTES")
+                        routes.forEach { rw ->
+                            LinkRow(
+                                glyph = "⟿",
+                                name = rw.route.name,
+                                sublabel = "${rw.points.size} pts  ·  ${rw.route.type.name}",
+                                onClick = { onLinkRoute(rw.route) },
+                            )
+                        }
+                    }
+                    if (areas.isNotEmpty()) {
+                        SectionHeader("// ZONES")
+                        areas.forEach { ar ->
+                            LinkRow(
+                                glyph = "▭",
+                                name = ar.name,
+                                sublabel = "zone overlay",
+                                onClick = { onLinkArea(ar) },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CLOSE", fontFamily = FontFamily.Monospace, color = Color.Gray)
+            }
+        },
+    )
+}
+
+@Composable
+private fun LinkRow(glyph: String, name: String, sublabel: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(glyph, color = Amber, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            Text(sublabel, color = Color(0xFF555555), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+        }
+        Text("[ + LINK ]", color = TerminalGreen, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+    }
 }
 
 // =============================================================================
@@ -1379,7 +1814,7 @@ private fun HintRow(text: String) {
 }
 
 @Composable
-private fun RouteRow(route: RouteWithPoints, onClick: () -> Unit) {
+private fun RouteRow(route: RouteWithPoints, onDetach: () -> Unit, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1402,6 +1837,8 @@ private fun RouteRow(route: RouteWithPoints, onClick: () -> Unit) {
                 fontSize = 10.sp,
             )
         }
+        DetachGlyph(onDetach)
+        Spacer(Modifier.width(10.dp))
         Text(
             text = "EDIT",
             color = Color(0xFF555555),
@@ -1412,7 +1849,7 @@ private fun RouteRow(route: RouteWithPoints, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AreaRow(area: AreaOverlayEntity, onClick: () -> Unit) {
+private fun AreaRow(area: AreaOverlayEntity, onDetach: () -> Unit, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1442,6 +1879,8 @@ private fun AreaRow(area: AreaOverlayEntity, onClick: () -> Unit) {
                 fontSize = 10.sp,
             )
         }
+        DetachGlyph(onDetach)
+        Spacer(Modifier.width(10.dp))
         Text(
             text = "EDIT",
             color = Color(0xFF555555),

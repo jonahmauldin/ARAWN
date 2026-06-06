@@ -42,6 +42,10 @@ interface MissionDao {
     @Query("SELECT * FROM missions WHERE archived = 0 ORDER BY updatedMs DESC")
     fun observeActiveMissions(): Flow<List<MissionEntity>>
 
+    /** Soft-archived missions, newest-updated first — drives the ARCHIVED tab. */
+    @Query("SELECT * FROM missions WHERE archived = 1 ORDER BY updatedMs DESC")
+    fun observeArchivedMissions(): Flow<List<MissionEntity>>
+
     @Query("SELECT * FROM missions WHERE missionId = :id")
     fun observeMission(id: Long): Flow<MissionEntity?>
 
