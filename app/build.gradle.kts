@@ -134,4 +134,7 @@ dependencies {
     implementation("net.zetetic:sqlcipher-android:4.6.1") {
         exclude(group = "com.android.support", module = "support-v4")
     }
+
+    // Pure-JVM unit tests for the geo helpers (track cleaner). Same pin as :recon.
+    testImplementation("junit:junit:4.13.2")
 }

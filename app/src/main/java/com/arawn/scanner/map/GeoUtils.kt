@@ -40,65 +40,104 @@ fun bearingDegrees(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Doub
 }
 
 /**
- * Strip GPS artifacts from a session track before it is drawn. Two passes:
+ * Strip GPS artifacts from a session track before it is drawn. Passes run from the
+ * cheapest / most reliable signal to the purely geometric ones:
  *
- *  Pass 1 (per-point gates) drops:
+ *  Pass 0 (per-point validity) drops fixes that are bad on their own merits,
+ *   independent of any neighbour:
  *   - null-island fixes (lat≈0 AND lon≈0) logged when there was no GPS lock;
- *   - "teleport" outliers whose implied speed from the previous *kept* point
- *     exceeds [maxSpeedMps] (~55 m/s ≈ 200 km/h — generous for vehicle recon, but
- *     well under the GPS jumps that draw spurious straight lines across the map).
+ *   - low-quality fixes whose reported horizontal accuracy exceeds
+ *     [accuracyLimitM]. This is the single most reliable outlier signal: a fix
+ *     that "teleports" a quarter mile is almost always one the GPS itself flagged
+ *     as a wide-radius (cell / network / multipath) estimate. Fixes with no
+ *     accuracy estimate (`accuracyM < 0`) are kept — we can't judge them here.
  *
- *  Pass 2 (3-point spike detector) catches the "dogleg" pattern that pass 1 misses:
- *   a single bad fix at a *believable* distance — the line dives out for ~400 m and
- *   snaps right back. The speed gate can't see it because the bad arm is short
- *   enough to look like normal movement; the round-trip detour vs. the through-
- *   chord reveals it. If `(d(prev,cur) + d(cur,next)) / d(prev,next) > [spikeRatio]`
- *   AND the spike arm is over [minSpikeArmM] (so we don't smooth real wiggles),
- *   drop the middle point. We always keep the first and last points so the track
- *   never shrinks at its endpoints.
+ *  Pass 0.5 (stale lead-in trim) drops a cold-start lock still pointing at the
+ *   *previous* session's location before it can become pass 1's anchor and drag
+ *   the entire track over to it. Only fires when the first leg is physically
+ *   impossible (a teleport) yet the next leg is plausible — so a genuinely fast
+ *   start is never trimmed.
  *
- * This is what removes the stray "yellow lines going to spots I wasn't at" without
- * touching the shared [com.arawn.core.database.WirelessDao.getSessionCoordinates]
- * projection (which is also used by the recon offline map and CSV export). The DAO
- * already orders by timestamp, so single forward passes suffice.
+ *  Pass 1 (teleport gate) drops outliers whose implied speed from the previous
+ *   *kept* point exceeds [maxSpeedMps] (~55 m/s ≈ 200 km/h — generous for vehicle
+ *   recon, but well under the GPS jumps that draw spurious straight lines). When
+ *   two fixes share a timestamp (batched write, dt≈0) speed is undefined, so we
+ *   fall back to a flat [maxCoincidentJumpM] cap — you cannot move 60 m in zero
+ *   time. Because the final fix is tested against its predecessor here, a
+ *   teleported *last* point is caught too.
+ *
+ *  Pass 2 (3-point spike detector) catches the "dogleg" pattern passes 0–1 miss:
+ *   a single bad fix at a *believable* distance and a *believable* (optimistic)
+ *   accuracy — the line dives out for ~400 m and snaps right back. The speed gate
+ *   can't see it because the bad arm is short enough to look like normal movement;
+ *   the round-trip detour vs. the through-chord reveals it. If
+ *   `(d(prev,cur) + d(cur,next)) / d(prev,next) > [spikeRatio]` AND the spike arm
+ *   is over [minSpikeArmM] (so we don't smooth real wiggles), drop the middle point.
+ *
+ * Filtering, not smoothing: every *kept* point is drawn exactly where it was
+ * logged, so real road curvature and corners survive untouched. We only ever
+ * remove points that are physically implausible — we never average positions
+ * (which would round off the very corners we want to preserve).
+ *
+ * This removes the stray "yellow lines going to spots I wasn't at" without touching
+ * the shared [com.arawn.core.database.WirelessDao.getSessionCoordinates] projection
+ * (also used by the recon offline map and CSV export). The DAO orders by timestamp,
+ * so single forward passes suffice.
  */
 fun cleanTrack(
     coords: List<CoordinatePair>,
     maxSpeedMps: Double = 55.0,
+    accuracyLimitM: Float = 50f,
     spikeRatio: Double = 3.0,
     minSpikeArmM: Double = 30.0,
+    maxCoincidentJumpM: Double = 60.0,
 ): List<CoordinatePair> {
-    // Pass 1: per-point gates.
-    val passOne = ArrayList<CoordinatePair>(coords.size)
-    var prev: CoordinatePair? = null
+    // Pass 0: per-point validity gates (no neighbour needed).
+    val valid = ArrayList<CoordinatePair>(coords.size)
     for (c in coords) {
         // No-fix sentinel — never draw a leg to the Gulf of Guinea.
         if (abs(c.latitude) < 1e-6 && abs(c.longitude) < 1e-6) continue
-        val p = prev
-        if (p != null) {
-            val dtSec = (c.timestampMs - p.timestampMs) / 1000.0
-            if (dtSec > 0) {
-                val dist = haversineMeters(p.latitude, p.longitude, c.latitude, c.longitude)
-                if (dist / dtSec > maxSpeedMps) continue // teleport outlier — drop
-            }
-        }
-        passOne.add(c)
-        prev = c
+        // Wide-radius fix the GPS itself distrusted. accuracyM < 0 == "no estimate"
+        // and is kept; only a positive, over-limit radius is rejected.
+        if (c.accuracyM >= 0f && c.accuracyM > accuracyLimitM) continue
+        valid.add(c)
     }
+    if (valid.size < 3) return valid
 
-    if (passOne.size < 3) return passOne
+    // Pass 0.5: peel a stale leading fix so pass 1 anchors on a real position.
+    // Bounded to a few points so a short burst of bad lead-in fixes clears without
+    // ever eating into a genuine track.
+    var lead = 0
+    while (valid.size - lead >= 3 && lead < 3) {
+        val p0 = valid[lead]; val p1 = valid[lead + 1]; val p2 = valid[lead + 2]
+        if (isTeleport(p0, p1, maxSpeedMps, maxCoincidentJumpM) &&
+            !isTeleport(p1, p2, maxSpeedMps, maxCoincidentJumpM)) {
+            lead++
+        } else break
+    }
+    val seed = if (lead > 0) valid.subList(lead, valid.size) else valid
+
+    // Pass 1: teleport gate (sequential, vs the last *kept* point).
+    val gated = ArrayList<CoordinatePair>(seed.size)
+    for (c in seed) {
+        val last = gated.lastOrNull()
+        if (last == null || !isTeleport(last, c, maxSpeedMps, maxCoincidentJumpM)) {
+            gated.add(c)
+        }
+    }
+    if (gated.size < 3) return gated
 
     // Pass 2: 3-point spike pass. Walks the survivors, comparing each interior
     // candidate to the last *kept* point and the next raw point. A spike has a
     // detour ratio much larger than 1 — for a true out-and-back, the chord
     // collapses and the ratio explodes.
-    val out = ArrayList<CoordinatePair>(passOne.size)
-    out.add(passOne.first())
+    val out = ArrayList<CoordinatePair>(gated.size)
+    out.add(gated.first())
     var i = 1
-    while (i < passOne.size - 1) {
+    while (i < gated.size - 1) {
         val last = out.last()
-        val cur  = passOne[i]
-        val next = passOne[i + 1]
+        val cur  = gated[i]
+        val next = gated[i + 1]
         val dPrevCur = haversineMeters(last.latitude, last.longitude, cur.latitude,  cur.longitude)
         val dCurNext = haversineMeters(cur.latitude,  cur.longitude,  next.latitude, next.longitude)
         val dPrevNext = haversineMeters(last.latitude, last.longitude, next.latitude, next.longitude)
@@ -111,8 +150,25 @@ fun cleanTrack(
         out.add(cur)
         i++
     }
-    out.add(passOne.last())
+    out.add(gated.last())
     return out
+}
+
+/**
+ * Is moving directly from [a] to [b] physically implausible? Over [maxSpeedMps]
+ * when time elapsed between the fixes, or over [maxCoincidentJumpM] metres when
+ * they share a timestamp (speed undefined). Used by the lead-in trim and the main
+ * teleport gate so both apply the exact same rule.
+ */
+private fun isTeleport(
+    a: CoordinatePair,
+    b: CoordinatePair,
+    maxSpeedMps: Double,
+    maxCoincidentJumpM: Double,
+): Boolean {
+    val dist = haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+    val dtSec = (b.timestampMs - a.timestampMs) / 1000.0
+    return if (dtSec > 0) dist / dtSec > maxSpeedMps else dist > maxCoincidentJumpM
 }
 
 /**

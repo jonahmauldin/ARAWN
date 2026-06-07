@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import android.widget.Toast
 import com.arawn.core.database.CoordinatePair
+import com.arawn.scanner.map.cleanTrack
 import com.arawn.scanner.export.EnrichedCsvExporter
 import com.arawn.scanner.ui.FrequencyCurveChart
 import com.arawn.scanner.ui.HeatmapPanel
@@ -207,7 +208,9 @@ class MainActivity : AppCompatActivity() {
                     if (viewMode != ViewMode.MAP) return@LaunchedEffect
                     val dao = container.wirelessDao
                     val sessionId = dao.getLatestSessionId()
-                    val coords = sessionId?.let { dao.getSessionCoordinates(it) }.orEmpty()
+                    // Same outlier scrub the OPS map uses, so the recon map never
+                    // draws a teleport leg either.
+                    val coords = cleanTrack(sessionId?.let { dao.getSessionCoordinates(it) }.orEmpty())
                     mapCoords.clear()
                     mapCoords.addAll(coords)
                 }

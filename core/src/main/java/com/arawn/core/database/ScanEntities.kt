@@ -162,14 +162,21 @@ data class SessionWithEntries(
 /**
  * Minimal GPS projection for the offline map (Phase 6).
  *
- * A deliberately tiny row — just the three numeric fields the map needs —
- * so rendering a track never pulls the heavy nested Wi-Fi/BLE signal arrays
- * into memory. Column names match [LogEntryEntity] so Room maps it directly.
+ * A deliberately tiny row — just the few numeric fields the map needs — so
+ * rendering a track never pulls the heavy nested Wi-Fi/BLE signal arrays into
+ * memory. Column names match [LogEntryEntity] so Room maps it directly.
+ *
+ * [accuracyM] is the fix's reported horizontal accuracy in metres (the same
+ * `-1f == no estimate` convention [LogEntryEntity] writes). It is projected here
+ * so the track cleaner can reject low-quality "teleport" fixes at the source —
+ * the single most reliable outlier signal. It defaults to `-1f` so callers that
+ * synthesise a [CoordinatePair] (e.g. the live position) need not supply it.
  */
 data class CoordinatePair(
     val latitude: Double,
     val longitude: Double,
     val timestampMs: Long,
+    val accuracyM: Float = -1f,
 )
 
 /**

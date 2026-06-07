@@ -97,12 +97,14 @@ abstract class WirelessDao {
 
     /**
      * Lightweight GPS-only projection for the offline map (Phase 6): just
-     * lat/lon/timestamp per scan window, chronologically ordered. Projects three
-     * columns instead of the full entity + its Wi-Fi/BLE subtree, so drawing a
-     * track stays cheap even for long sessions.
+     * lat/lon/timestamp + the fix's horizontal accuracy per scan window,
+     * chronologically ordered. Projects four columns instead of the full entity +
+     * its Wi-Fi/BLE subtree, so drawing a track stays cheap even for long
+     * sessions. `accuracyM` lets [com.arawn.scanner.map.cleanTrack] drop unreliable
+     * fixes before they draw a spurious leg across the map.
      */
     @Query(
-        "SELECT latitude, longitude, timestampMs FROM log_entries " +
+        "SELECT latitude, longitude, timestampMs, accuracyM FROM log_entries " +
             "WHERE sessionId = :sessionId ORDER BY timestampMs"
     )
     abstract suspend fun getSessionCoordinates(sessionId: Long): List<CoordinatePair>
