@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: gradle :app:assembleDebug -Pbuild_number=${{ github.run_number }} --stacktrace --no-daemon
 
       - name: Upload APK as build artifact
         uses: actions/upload-artifact@v4

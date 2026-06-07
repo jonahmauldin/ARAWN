@@ -28,6 +28,12 @@ val hasStableSigning: Boolean =
     stableStorePath != null && file(stableStorePath).exists() &&
         stableStorePassword != null && stableKeyAlias != null && stableKeyPassword != null
 
+// CI (build-apk.yml) passes -Pbuild_number=<github.run_number> so the boot
+// screen's BUILD-NN tag matches the published "build-NN" GitHub Release. Local
+// builds have no such property and show "dev".
+val ciBuildNumber: String =
+    (project.findProperty("build_number") as String?)?.takeIf { it.isNotBlank() } ?: "dev"
+
 android {
     namespace = "com.arawn.scanner"
     compileSdk = 35
@@ -36,8 +42,11 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 36
-        versionName = "1.7.0-bugfix"
+        versionCode = 37
+        versionName = "1.7.1"
+
+        // Surfaced on the boot screen; "dev" locally, the CI run number in releases.
+        buildConfigField("String", "BUILD_NUMBER", "\"$ciBuildNumber\"")
     }
 
     signingConfigs {

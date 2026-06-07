@@ -440,7 +440,7 @@ private fun Tagline(alpha: Float) {
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "v${BuildConfig.VERSION_NAME}   ·   BUILD-${BuildConfig.VERSION_CODE}   ·   KEYSTORE: STABLE",
+            text = "v${BuildConfig.VERSION_NAME}   ·   BUILD-${BuildConfig.BUILD_NUMBER}   ·   KEYSTORE: STABLE",
             color = MapInk.copy(alpha = 0.42f * alpha),
             fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
