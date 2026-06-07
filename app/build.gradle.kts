@@ -42,8 +42,8 @@ android {
         applicationId = "com.arawn.scanner"
         minSdk = 30          // Android 11 — required by the connectedDevice FGS type
         targetSdk = 35       // Android 15
-        versionCode = 37
-        versionName = "1.7.1"
+        versionCode = 38
+        versionName = "1.7.2"
 
         // Surfaced on the boot screen; "dev" locally, the CI run number in releases.
         buildConfigField("String", "BUILD_NUMBER", "\"$ciBuildNumber\"")

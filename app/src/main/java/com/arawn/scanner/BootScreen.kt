@@ -11,6 +11,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,29 +29,29 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import kotlinx.coroutines.delay
-import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
 
 private val MatteBlack    = Color(0xFF050507)
 private val DeepRed       = Color(0xFFB31818)
 private val GlowRed       = Color(0xFFFF2A2A)
-private val EmberRed      = Color(0xFF7A0F0F)
 private val White         = Color(0xFFF0F0F2)
 private val MapInk        = Color(0xFFE6E6E6)
 private val TacticalAmber = Color(0xFFE0B341)
@@ -59,237 +59,356 @@ private val TacticalCyan  = Color(0xFF4FD8E0)
 private val TacticalGreen = Color(0xFF35D07F)
 
 /**
- * Cold-start boot screen. Holds for ~1.8s then calls [onComplete]; tapping
- * anywhere skips the rest of the hold. Pure Compose Canvas — no extra deps.
+ * Position of the hound's eye within the [R.drawable.arawn_hound] asset, as a
+ * fraction of the image (measured from the artwork). Every acquisition effect —
+ * reticle, lock ring, eye-glow — anchors here, so if the asset is ever re-cropped
+ * only these two numbers need updating.
+ */
+private const val EYE_FX = 0.587f
+private const val EYE_FY = 0.583f
+
+/**
+ * Cold-start boot screen. The [R.drawable.arawn_hound] artwork is the hero,
+ * displayed directly (never redrawn) and centred on matte black; live ISR/HUD
+ * effects are layered over and around it — a sensor sweep, signal-processing
+ * texture, telemetry brackets, a target reticle that converges on the hound's
+ * eye, a lock-on pulse as initialisation completes, and a controlled red
+ * eye-glow synchronised to the lock. Holds ~3s, then calls [onComplete]; a tap
+ * anywhere skips the remaining hold.
  */
 @Composable
 fun BootScreen(onComplete: () -> Unit) {
-    val backgroundAlpha = remember { Animatable(0f) }
-    val wordmarkAlpha   = remember { Animatable(0f) }
-    val statusAlpha     = remember { Animatable(0f) }
-    val houndsAlpha     = remember { Animatable(0f) }
-    val lockOn          = remember { Animatable(0f) }
-    val readyAlpha      = remember { Animatable(0f) }
-    val progress        = remember { Animatable(0f) }
+    val posterAlpha = remember { Animatable(0f) }
+    val hudAlpha    = remember { Animatable(0f) }
+    val statusAlpha = remember { Animatable(0f) }
+    val lockOn      = remember { Animatable(0f) }   // reticle convergence + eye-glow ramp
+    val lockPulse   = remember { Animatable(0f) }   // one-shot lock-on snap
+    val progress    = remember { Animatable(0f) }
+    val readyAlpha  = remember { Animatable(0f) }
+
+    // Continuous, deliberate sensor motion.
+    val infinite = rememberInfiniteTransition(label = "boot")
+    val scanPhase by infinite.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
+        label = "scan",
+    )
+    val sweep by infinite.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+        label = "sweep",
+    )
+    val glitch by infinite.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart),
+        label = "glitch",
+    )
+    val noise by infinite.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(140, easing = LinearEasing), RepeatMode.Restart),
+        label = "noise",
+    )
+    val eyePulse by infinite.animateFloat(
+        0.6f, 1f,
+        infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Reverse),
+        label = "eye",
+    )
 
     LaunchedEffect(Unit) {
-        backgroundAlpha.animateTo(1f, tween(420, easing = LinearEasing))
-        wordmarkAlpha.animateTo(1f, tween(340))
-        statusAlpha.animateTo(1f, tween(220))
-        houndsAlpha.animateTo(1f, tween(440))
-        // The "lock-on" beat: the targeting reticle converges on the hound's eye
-        // and the eye-glow ramps — what sells the tracking-subsystem read.
-        lockOn.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
-        progress.animateTo(1f, tween(380, easing = LinearEasing))
+        posterAlpha.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
+        hudAlpha.animateTo(1f, tween(360))
+        statusAlpha.animateTo(1f, tween(200))
+        progress.animateTo(0.7f, tween(440, easing = LinearEasing))   // subsystems initialising
+        lockOn.animateTo(1f, tween(640, easing = FastOutSlowInEasing)) // reticle converges on the eye
+        progress.animateTo(1f, tween(240, easing = LinearEasing))      // initialisation completes
+        lockPulse.animateTo(1f, tween(380, easing = FastOutSlowInEasing)) // lock-on snap
         readyAlpha.animateTo(1f, tween(160))
-        delay(220)
+        delay(260)
         onComplete()
     }
 
-    // Skip-on-tap (no ripple, terminal feel).
+    val painter = painterResource(R.drawable.arawn_hound)
+    val imgAspect = painter.intrinsicSize.let { s ->
+        if (s.width > 0f && s.height > 0f) s.width / s.height else 1024f / 1536f
+    }
+    val ready = readyAlpha.value > 0.5f
+
     val skip = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MatteBlack)
-            .clickable(
-                interactionSource = skip,
-                indication = null,
-                onClick = onComplete,
-            ),
+            .clickable(interactionSource = skip, indication = null, onClick = onComplete),
     ) {
-        TopoBackground(alpha = backgroundAlpha.value)
-        ScanLineOverlay(alpha = backgroundAlpha.value)
-        ViewportFrame(alpha = backgroundAlpha.value)
+        // ── Hero: the provided artwork, shown directly (preserve quality) ──────
+        Image(
+            painter = painter,
+            contentDescription = "ARAWN",
+            contentScale = ContentScale.Fit,
+            alpha = posterAlpha.value,
+            modifier = Modifier.fillMaxSize(),
+        )
 
+        // ── Live ISR/HUD effects, anchored to the drawn artwork rect ──────────
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val rect = fittedRect(imgAspect)
+            val h = hudAlpha.value
+            drawScanlineTexture(rect, h)
+            drawDigitalNoise(rect, noise, h)
+            drawSensorSweep(rect, scanPhase, h)
+            drawTelemetry(rect, sweep, lockOn.value, ready, h)
+            drawGlitchShards(rect, glitch, h)
+            drawEyeGlow(rect, lockOn.value, lockPulse.value, eyePulse, h)
+            drawReticle(rect, lockOn.value, lockPulse.value, ready, h)
+            drawScreenFrame(h)
+        }
+
+        // ── Below the hound: live boot status + telemetry ─────────────────────
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.5f to MatteBlack.copy(alpha = 0.78f),
+                        1f to MatteBlack,
+                    ),
+                )
+                .padding(top = 28.dp, bottom = 30.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.weight(0.62f))
-            ArawnWordmark(alpha = wordmarkAlpha.value)
-            Spacer(Modifier.height(10.dp))
-            Tagline(alpha = wordmarkAlpha.value)
-            Spacer(Modifier.weight(0.5f))
-            // The hero: a single Cŵn Annwn rendered as a tracking subsystem,
-            // centred beneath the wordmark.
-            CwnAnnwnSubsystem(alpha = houndsAlpha.value, lockOn = lockOn.value)
-            Spacer(Modifier.weight(0.5f))
-            BootStatus(
-                progress  = progress.value,
-                ready     = readyAlpha.value > 0.5f,
-                alpha     = statusAlpha.value,
+            BootStatus(progress = progress.value, ready = ready, alpha = statusAlpha.value)
+            Spacer(Modifier.height(12.dp))
+            DataTicker(alpha = hudAlpha.value)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}   ·   BUILD-${BuildConfig.BUILD_NUMBER}   ·   KEYSTORE: STABLE",
+                color = MapInk.copy(alpha = 0.40f * hudAlpha.value),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                letterSpacing = 2.sp,
             )
-            Spacer(Modifier.height(16.dp))
-            DataTicker(alpha = houndsAlpha.value)
-            Spacer(Modifier.weight(0.28f))
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-//  Background: topographic map, grid, coordinate markings
+//  Geometry helpers — map the ContentScale.Fit artwork rect + eye anchor
 // ---------------------------------------------------------------------------
 
-@Composable
-private fun TopoBackground(alpha: Float) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        // Minor 32dp grid
-        val minor = 32.dp.toPx()
-        var x = 0f
-        while (x < size.width) {
-            drawLine(
-                color = MapInk.copy(alpha = 0.025f * alpha),
-                start = Offset(x, 0f),
-                end   = Offset(x, size.height),
-                strokeWidth = 0.6f,
-            )
-            x += minor
-        }
-        var y = 0f
-        while (y < size.height) {
-            drawLine(
-                color = MapInk.copy(alpha = 0.025f * alpha),
-                start = Offset(0f, y),
-                end   = Offset(size.width, y),
-                strokeWidth = 0.6f,
-            )
-            y += minor
-        }
+/** The rect the artwork actually occupies under [ContentScale.Fit] (centred, letterboxed). */
+private fun DrawScope.fittedRect(imgAspect: Float): Rect {
+    val cw = size.width
+    val ch = size.height
+    val w: Float
+    val h: Float
+    if (cw / ch > imgAspect) {        // container wider than the image → fit by height
+        h = ch; w = h * imgAspect
+    } else {                          // taller than the image → fit by width
+        w = cw; h = w / imgAspect
+    }
+    val l = (cw - w) / 2f
+    val t = (ch - h) / 2f
+    return Rect(l, t, l + w, t + h)
+}
 
-        // Major 128dp grid with crosshair ticks
-        val major = 128.dp.toPx()
-        val tickHalf = 3.dp.toPx()
-        var mx = 0f
-        while (mx < size.width) {
-            drawLine(
-                color = MapInk.copy(alpha = 0.06f * alpha),
-                start = Offset(mx, 0f),
-                end   = Offset(mx, size.height),
-                strokeWidth = 0.8f,
-            )
-            mx += major
-        }
-        var my = 0f
-        while (my < size.height) {
-            drawLine(
-                color = MapInk.copy(alpha = 0.06f * alpha),
-                start = Offset(0f, my),
-                end   = Offset(size.width, my),
-                strokeWidth = 0.8f,
-            )
-            my += major
-        }
-        // Crosshair tick marks at every major intersection
-        var ix = 0f
-        while (ix < size.width) {
-            var iy = 0f
-            while (iy < size.height) {
-                drawLine(
-                    color = MapInk.copy(alpha = 0.14f * alpha),
-                    start = Offset(ix - tickHalf, iy),
-                    end   = Offset(ix + tickHalf, iy),
-                    strokeWidth = 0.8f,
-                )
-                drawLine(
-                    color = MapInk.copy(alpha = 0.14f * alpha),
-                    start = Offset(ix, iy - tickHalf),
-                    end   = Offset(ix, iy + tickHalf),
-                    strokeWidth = 0.8f,
-                )
-                iy += major
-            }
-            ix += major
-        }
+/** A point at fractional ([fx],[fy]) inside this rect. */
+private fun Rect.frac(fx: Float, fy: Float) = Offset(left + width * fx, top + height * fy)
 
-        // Two terrain features — concentric contour "ridges"
-        drawContourRings(
-            center = Offset(size.width * 0.28f, size.height * 0.36f),
-            baseRadius = size.minDimension * 0.16f,
-            rings = 5,
-            phase = 0.7f,
-            alpha = alpha,
-        )
-        drawContourRings(
-            center = Offset(size.width * 0.78f, size.height * 0.62f),
-            baseRadius = size.minDimension * 0.20f,
-            rings = 6,
-            phase = 2.1f,
-            alpha = alpha,
-        )
+/** Four inward-pointing L brackets at the corners of [r]. */
+private fun DrawScope.cornerBrackets(r: Rect, arm: Float, color: Color, stroke: Float) {
+    drawLine(color, r.topLeft, r.topLeft + Offset(arm, 0f), stroke)
+    drawLine(color, r.topLeft, r.topLeft + Offset(0f, arm), stroke)
+    drawLine(color, r.topRight, r.topRight + Offset(-arm, 0f), stroke)
+    drawLine(color, r.topRight, r.topRight + Offset(0f, arm), stroke)
+    drawLine(color, r.bottomLeft, r.bottomLeft + Offset(arm, 0f), stroke)
+    drawLine(color, r.bottomLeft, r.bottomLeft + Offset(0f, -arm), stroke)
+    drawLine(color, r.bottomRight, r.bottomRight + Offset(-arm, 0f), stroke)
+    drawLine(color, r.bottomRight, r.bottomRight + Offset(0f, -arm), stroke)
+}
 
-        // Coordinate labels in the four corners
-        drawTacticalText(
-            text = "GRID 47Q ML 84500 32600",
-            xPx = 14.dp.toPx(),
-            yPx = 22.dp.toPx(),
-            sizeSp = 9f,
-            color = TacticalCyan.copy(alpha = 0.55f * alpha),
-        )
-        drawTacticalText(
-            text = "UTM-K · WGS84",
-            xPx = size.width - 110.dp.toPx(),
-            yPx = 22.dp.toPx(),
-            sizeSp = 9f,
-            color = TacticalCyan.copy(alpha = 0.55f * alpha),
-        )
-        drawTacticalText(
-            text = "MAG 047° · DECL +12.3",
-            xPx = 14.dp.toPx(),
-            yPx = size.height - 14.dp.toPx(),
-            sizeSp = 9f,
-            color = TacticalAmber.copy(alpha = 0.45f * alpha),
-        )
-        drawTacticalText(
-            text = "ELEV 248m · SLOPE 4°",
-            xPx = size.width - 130.dp.toPx(),
-            yPx = size.height - 14.dp.toPx(),
-            sizeSp = 9f,
-            color = TacticalAmber.copy(alpha = 0.45f * alpha),
+// ---------------------------------------------------------------------------
+//  Signal-processing layers
+// ---------------------------------------------------------------------------
+
+/** Faint horizontal sensor/CRT scanline texture over the artwork only. */
+private fun DrawScope.drawScanlineTexture(rect: Rect, alpha: Float) {
+    if (alpha <= 0f) return
+    val gap = 3.5.dp.toPx()
+    val col = TacticalCyan.copy(alpha = 0.030f * alpha)
+    var y = rect.top
+    while (y < rect.bottom) {
+        drawLine(col, Offset(rect.left, y), Offset(rect.right, y), 1f)
+        y += gap
+    }
+}
+
+/** Sparse flickering digital-noise specks (signal grain). */
+private fun DrawScope.drawDigitalNoise(rect: Rect, phase: Float, alpha: Float) {
+    if (alpha <= 0f) return
+    val step = floor(phase * 14f)
+    val r = 1.1.dp.toPx()
+    for (i in 0 until 60) {
+        val s = i * 1.37f
+        val tw = hash(s + step)
+        if (tw < 0.80f) continue
+        val px = rect.left + hash(s) * rect.width
+        val py = rect.top + hash(s + 7.1f) * rect.height
+        drawCircle(White.copy(alpha = (tw - 0.80f) / 0.20f * 0.10f * alpha), r, Offset(px, py))
+    }
+}
+
+/** A single cyan sensor line sweeping top→bottom with a soft trailing band. */
+private fun DrawScope.drawSensorSweep(rect: Rect, scanPhase: Float, alpha: Float) {
+    if (alpha <= 0f) return
+    val y = rect.top + scanPhase * rect.height
+    val band = 44.dp.toPx()
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color.Transparent,
+            1f to TacticalCyan.copy(alpha = 0.05f * alpha),
+            startY = y - band,
+            endY = y,
+        ),
+        topLeft = Offset(rect.left, y - band),
+        size = Size(rect.width, band),
+    )
+    drawLine(TacticalCyan.copy(alpha = 0.12f * alpha), Offset(rect.left, y), Offset(rect.right, y), 1.dp.toPx())
+    drawLine(TacticalCyan.copy(alpha = 0.04f * alpha), Offset(rect.left, y + 2f), Offset(rect.right, y + 2f), 3.dp.toPx())
+}
+
+/** Holographic tracking markers + telemetry read-outs framing the hound. */
+private fun DrawScope.drawTelemetry(rect: Rect, sweep: Float, lockOn: Float, ready: Boolean, alpha: Float) {
+    if (alpha <= 0f) return
+    // Bounding box around the hound head (artwork fractions).
+    val hr = Rect(
+        rect.left + rect.width * 0.30f,
+        rect.top + rect.height * 0.495f,
+        rect.left + rect.width * 0.775f,
+        rect.top + rect.height * 0.715f,
+    )
+    cornerBrackets(hr, 12.dp.toPx(), TacticalCyan.copy(alpha = 0.42f * alpha), 1.3.dp.toPx())
+    // Acquisition tick travelling along the top edge.
+    val tx = hr.left + sweep * hr.width
+    drawLine(
+        TacticalCyan.copy(alpha = 0.5f * alpha),
+        Offset(tx, hr.top - 3.dp.toPx()), Offset(tx, hr.top + 3.dp.toPx()),
+        1.2.dp.toPx(),
+    )
+    drawTacticalText("TGT // CWN-ANNWN", hr.left, hr.top - 10.dp.toPx(), 8.5f, TacticalCyan.copy(alpha = 0.70f * alpha))
+    drawTacticalText("CLASS  K9-ISR", hr.left, hr.bottom + 14.dp.toPx(), 7.5f, TacticalCyan.copy(alpha = 0.50f * alpha))
+    val conf = if (ready) "TRK CONF 0.98" else "TRK CONF " + "%.2f".format(0.40f + 0.55f * lockOn)
+    drawTacticalText(
+        conf,
+        hr.right - 58.dp.toPx(), hr.bottom + 14.dp.toPx(), 7.5f,
+        (if (ready) TacticalGreen else TacticalAmber).copy(alpha = 0.65f * alpha),
+    )
+}
+
+/** Data-fragment shards dissolving leftward off the hound's dispersion edge. */
+private fun DrawScope.drawGlitchShards(rect: Rect, phase: Float, alpha: Float) {
+    if (alpha <= 0f) return
+    val originX = rect.left + rect.width * 0.42f
+    for (k in 0 until 11) {
+        val fy = 0.55f + (k / 11f) * 0.11f
+        val py = rect.top + fy * rect.height
+        val flick = fract(phase * 1.2f + k * 0.41f)
+        val drift = flick * rect.width * 0.05f
+        val len = (3f + fract(k * 0.7f + phase) * 10f).dp.toPx()
+        val x1 = originX - drift
+        val x0 = x1 - len
+        val col = if (k % 3 == 0) TacticalCyan else White
+        drawLine(col.copy(alpha = (1f - flick) * 0.45f * alpha), Offset(x0, py), Offset(x1, py), 1.2.dp.toPx())
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Acquisition: eye-glow + converging reticle + lock-on
+// ---------------------------------------------------------------------------
+
+/** Controlled additive red glow on the hound's eye, ramping with the lock. */
+private fun DrawScope.drawEyeGlow(rect: Rect, lockOn: Float, lockPulse: Float, eyePulse: Float, alpha: Float) {
+    if (alpha <= 0f) return
+    val eye = rect.frac(EYE_FX, EYE_FY)
+    val intensity = (0.30f + 0.70f * lockOn) * (0.72f + 0.28f * eyePulse)
+    val flash = 4f * lockPulse * (1f - lockPulse)   // 0→1→0 over the lock snap
+    val baseR = rect.width * 0.020f
+    drawCircle(GlowRed.copy(alpha = (0.42f * intensity + 0.22f * flash) * alpha), baseR * 2.6f, eye, blendMode = BlendMode.Plus)
+    drawCircle(GlowRed.copy(alpha = (0.62f * intensity + 0.30f * flash) * alpha), baseR * 1.4f, eye, blendMode = BlendMode.Plus)
+    drawCircle(White.copy(alpha = (0.42f * intensity * lockOn + 0.25f * flash) * alpha), baseR * 0.55f, eye, blendMode = BlendMode.Plus)
+    if (flash > 0.001f) {
+        drawCircle(
+            GlowRed.copy(alpha = flash * 0.5f * alpha),
+            baseR * 2.2f + lockPulse * rect.width * 0.055f, eye,
+            style = Stroke(1.5.dp.toPx()), blendMode = BlendMode.Plus,
         )
     }
 }
 
-/** Draw [rings] nested wavy closed curves around [center] — a contour-line cluster. */
-private fun DrawScope.drawContourRings(
-    center: Offset,
-    baseRadius: Float,
-    rings: Int,
-    phase: Float,
-    alpha: Float,
-) {
-    val segments = 80
-    for (r in 0 until rings) {
-        val ringRadius = baseRadius * (0.35f + r * 0.18f)
-        val path = Path()
-        for (i in 0..segments) {
-            val t = (i.toFloat() / segments) * 2f * Math.PI.toFloat()
-            // Two summed harmonics so each ring is irregular but smooth.
-            val wobble =
-                sin(t * 3f + phase + r * 0.4f) * 0.10f +
-                cos(t * 5f - phase * 0.5f + r * 0.7f) * 0.06f
-            val rad = ringRadius * (1f + wobble)
-            val x = center.x + cos(t) * rad
-            val y = center.y + sin(t) * rad * 0.78f  // squash → ovaloid terrain
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        path.close()
-        drawPath(
-            path = path,
-            color = MapInk.copy(alpha = (0.13f - r * 0.012f) * alpha),
-            style = Stroke(width = 0.9f),
+/** Target reticle that converges onto the eye, then a green lock + snap pulse. */
+private fun DrawScope.drawReticle(rect: Rect, lockOn: Float, lockPulse: Float, ready: Boolean, alpha: Float) {
+    if (alpha <= 0f) return
+    val eye = rect.frac(EYE_FX, EYE_FY)
+    val spread = (1f - lockOn) * rect.width * 0.17f
+    val rHalf = rect.width * 0.072f + spread
+    val arm = rect.width * 0.026f
+    val rc = TacticalCyan.copy(alpha = (0.30f + 0.50f * lockOn) * alpha)
+    val box = Rect(eye.x - rHalf, eye.y - rHalf, eye.x + rHalf, eye.y + rHalf)
+    cornerBrackets(box, arm, rc, 1.3.dp.toPx())
+    // Inward crosshair ticks N/E/S/W.
+    val tick = rect.width * 0.012f
+    drawLine(rc, Offset(eye.x, box.top), Offset(eye.x, box.top + tick), 1.dp.toPx())
+    drawLine(rc, Offset(eye.x, box.bottom), Offset(eye.x, box.bottom - tick), 1.dp.toPx())
+    drawLine(rc, Offset(box.left, eye.y), Offset(box.left + tick, eye.y), 1.dp.toPx())
+    drawLine(rc, Offset(box.right, eye.y), Offset(box.right - tick, eye.y), 1.dp.toPx())
+    // Green lock ring fades in as the reticle settles.
+    if (lockOn > 0.5f) {
+        val ringA = (lockOn - 0.5f) / 0.5f
+        drawCircle(TacticalGreen.copy(alpha = 0.60f * ringA * alpha), rect.width * 0.052f, eye, style = Stroke(1.2.dp.toPx()))
+    }
+    // Lock-on snap: a brief expanding green ring.
+    val flash = 4f * lockPulse * (1f - lockPulse)
+    if (flash > 0.001f) {
+        drawCircle(
+            TacticalGreen.copy(alpha = flash * 0.55f * alpha),
+            rect.width * (0.052f + lockPulse * 0.05f), eye,
+            style = Stroke(1.5.dp.toPx()),
         )
     }
+    // Acquisition status flag beside the reticle.
+    val col = if (ready) TacticalGreen else TacticalAmber
+    val lx = eye.x + rHalf + 10.dp.toPx()
+    val ly = eye.y - rHalf + 2.dp.toPx()
+    drawCircle(col.copy(alpha = 0.9f * alpha), 2.2.dp.toPx(), Offset(lx - 6.dp.toPx(), ly - 3.dp.toPx()))
+    drawTacticalText(if (ready) "TGT LOCK" else "ACQUIRING", lx, ly, 9f, col.copy(alpha = 0.85f * alpha))
 }
+
+/** Subtle white corner brackets at the screen edges — command-console framing. */
+private fun DrawScope.drawScreenFrame(alpha: Float) {
+    if (alpha <= 0f) return
+    val pad = 12.dp.toPx()
+    val len = 20.dp.toPx()
+    val stroke = 1.3.dp.toPx()
+    val col = White.copy(alpha = 0.40f * alpha)
+    val w = size.width
+    val h = size.height
+    drawLine(col, Offset(pad, pad), Offset(pad + len, pad), stroke)
+    drawLine(col, Offset(pad, pad), Offset(pad, pad + len), stroke)
+    drawLine(col, Offset(w - pad, pad), Offset(w - pad - len, pad), stroke)
+    drawLine(col, Offset(w - pad, pad), Offset(w - pad, pad + len), stroke)
+    drawLine(col, Offset(pad, h - pad), Offset(pad + len, h - pad), stroke)
+    drawLine(col, Offset(pad, h - pad), Offset(pad, h - pad - len), stroke)
+    drawLine(col, Offset(w - pad, h - pad), Offset(w - pad - len, h - pad), stroke)
+    drawLine(col, Offset(w - pad, h - pad), Offset(w - pad, h - pad - len), stroke)
+}
+
+// ---------------------------------------------------------------------------
+//  Canvas text + hashing helpers
+// ---------------------------------------------------------------------------
 
 /** Tactical-style monospace label drawn directly on the canvas. */
-private fun DrawScope.drawTacticalText(
-    text: String,
-    xPx: Float,
-    yPx: Float,
-    sizeSp: Float,
-    color: Color,
-) {
+private fun DrawScope.drawTacticalText(text: String, xPx: Float, yPx: Float, sizeSp: Float, color: Color) {
     val paint = Paint().apply {
         this.color = color.toArgb()
         textSize = sizeSp * density
@@ -302,155 +421,17 @@ private fun DrawScope.drawTacticalText(
 
 private fun Color.toArgb(): Int {
     val a = (alpha * 255f).toInt() and 0xff
-    val r = (red   * 255f).toInt() and 0xff
+    val r = (red * 255f).toInt() and 0xff
     val g = (green * 255f).toInt() and 0xff
-    val b = (blue  * 255f).toInt() and 0xff
+    val b = (blue * 255f).toInt() and 0xff
     return (a shl 24) or (r shl 16) or (g shl 8) or b
 }
 
-// ---------------------------------------------------------------------------
-//  Corner-bracket viewport frame
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ViewportFrame(alpha: Float) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val pad = 12.dp.toPx()
-        val len = 22.dp.toPx()
-        val stroke = 1.4.dp.toPx()
-        val col = White.copy(alpha = 0.55f * alpha)
-        // TL
-        drawLine(col, Offset(pad, pad), Offset(pad + len, pad), stroke)
-        drawLine(col, Offset(pad, pad), Offset(pad, pad + len), stroke)
-        // TR
-        drawLine(col, Offset(size.width - pad, pad), Offset(size.width - pad - len, pad), stroke)
-        drawLine(col, Offset(size.width - pad, pad), Offset(size.width - pad, pad + len), stroke)
-        // BL
-        drawLine(col, Offset(pad, size.height - pad), Offset(pad + len, size.height - pad), stroke)
-        drawLine(col, Offset(pad, size.height - pad), Offset(pad, size.height - pad - len), stroke)
-        // BR
-        drawLine(col, Offset(size.width - pad, size.height - pad), Offset(size.width - pad - len, size.height - pad), stroke)
-        drawLine(col, Offset(size.width - pad, size.height - pad), Offset(size.width - pad, size.height - pad - len), stroke)
-    }
-}
+private fun hash(n: Float): Float = fract(sin(n) * 43758.5453f)
+private fun fract(v: Float): Float = v - floor(v)
 
 // ---------------------------------------------------------------------------
-//  Animated scan line
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ScanLineOverlay(alpha: Float) {
-    val infinite = rememberInfiniteTransition(label = "scan")
-    val t by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "scan-y",
-    )
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val y = size.height * t
-        // Hairline scan ribbon — three stacked lines so it has a soft "core".
-        drawLine(
-            color = TacticalCyan.copy(alpha = 0.04f * alpha),
-            start = Offset(0f, y - 2f),
-            end   = Offset(size.width, y - 2f),
-            strokeWidth = 3.dp.toPx(),
-        )
-        drawLine(
-            color = TacticalCyan.copy(alpha = 0.10f * alpha),
-            start = Offset(0f, y),
-            end   = Offset(size.width, y),
-            strokeWidth = 1.dp.toPx(),
-        )
-        drawLine(
-            color = TacticalCyan.copy(alpha = 0.04f * alpha),
-            start = Offset(0f, y + 2f),
-            end   = Offset(size.width, y + 2f),
-            strokeWidth = 3.dp.toPx(),
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  ARAWN wordmark with red edge glow
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ArawnWordmark(alpha: Float) {
-    Box(contentAlignment = Alignment.Center) {
-        // Bloom layer (red), large blur — soft halo behind the white letters.
-        // Modifier.blur is API 31+; below it gracefully renders as solid red,
-        // hidden behind the white letterforms — still acceptable.
-        Text(
-            text = "ARAWN",
-            color = GlowRed.copy(alpha = 0.85f * alpha),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Black,
-            fontSize = 64.sp,
-            letterSpacing = 12.sp,
-            modifier = Modifier.blur(22.dp),
-        )
-        // Mid-tone bloom — tighter halo for definition.
-        Text(
-            text = "ARAWN",
-            color = DeepRed.copy(alpha = 0.55f * alpha),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Black,
-            fontSize = 64.sp,
-            letterSpacing = 12.sp,
-            modifier = Modifier.blur(6.dp),
-        )
-        // Primary white wordmark.
-        Text(
-            text = "ARAWN",
-            color = White.copy(alpha = alpha),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Black,
-            fontSize = 64.sp,
-            letterSpacing = 12.sp,
-        )
-    }
-}
-
-@Composable
-private fun Tagline(alpha: Float) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Canvas(
-            modifier = Modifier
-                .width(220.dp)
-                .height(1.dp),
-        ) {
-            drawLine(
-                color = DeepRed.copy(alpha = 0.85f * alpha),
-                start = Offset(0f, 0f),
-                end   = Offset(size.width, 0f),
-                strokeWidth = 1.4.dp.toPx(),
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = "FIELD  OPERATIONS  PLATFORM",
-            color = TacticalAmber.copy(alpha = 0.85f * alpha),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            letterSpacing = 4.sp,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "v${BuildConfig.VERSION_NAME}   ·   BUILD-${BuildConfig.BUILD_NUMBER}   ·   KEYSTORE: STABLE",
-            color = MapInk.copy(alpha = 0.42f * alpha),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.sp,
-            letterSpacing = 2.sp,
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  Boot status + progress
+//  Boot status + progress (below the hound)
 // ---------------------------------------------------------------------------
 
 @Composable
@@ -472,256 +453,32 @@ private fun BootStatus(progress: Float, ready: Boolean, alpha: Float) {
                 .width(260.dp)
                 .height(4.dp),
         ) {
-            // Track
             drawLine(
                 color = White.copy(alpha = 0.12f * alpha),
                 start = Offset(0f, size.height / 2f),
-                end   = Offset(size.width, size.height / 2f),
+                end = Offset(size.width, size.height / 2f),
                 strokeWidth = size.height,
             )
-            // Fill
             val fillColor = if (ready) TacticalGreen else DeepRed
             drawLine(
                 color = fillColor.copy(alpha = 0.90f * alpha),
                 start = Offset(0f, size.height / 2f),
-                end   = Offset(size.width * progress, size.height / 2f),
+                end = Offset(size.width * progress, size.height / 2f),
                 strokeWidth = size.height,
             )
-            // Tick segmentation
             val segs = 16
             for (s in 1 until segs) {
                 val sx = size.width * (s.toFloat() / segs)
                 drawLine(
                     color = MatteBlack,
                     start = Offset(sx, 0f),
-                    end   = Offset(sx, size.height),
+                    end = Offset(sx, size.height),
                     strokeWidth = 1.dp.toPx(),
                 )
             }
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-//  Cŵn Annwn — single tracking-subsystem hound (hero element)
-//
-//  One stylised hound head rendered as a platform subsystem: a clean white
-//  digital silhouette with red ears and a glowing red eye, wrapped in a
-//  targeting reticle that locks onto the eye, sensor scan-lines, a wireframe
-//  hint, and a data-dissolve edge. Deliberately angular (CAD/technical, not
-//  fantasy) — it reads as sensor hardware tracking a target, never a beast.
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun CwnAnnwnSubsystem(alpha: Float, lockOn: Float) {
-    val infinite = rememberInfiniteTransition(label = "hound")
-    val eyePulse by infinite.animateFloat(
-        initialValue = 0.62f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1300, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "eye",
-    )
-    val scanPhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(2600, easing = LinearEasing)),
-        label = "scan",
-    )
-    val glitchPhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(820, easing = LinearEasing)),
-        label = "glitch",
-    )
-
-    Box(
-        modifier = Modifier.size(width = 300.dp, height = 208.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawSubsystemFrame(alpha)
-            drawHoundHead(eyePulse, scanPhase, glitchPhase, lockOn, alpha)
-            drawSubsystemLabels(lockOn, eyePulse, alpha)
-        }
-    }
-}
-
-/** Corner brackets + faint rails framing the hound as a sensor viewport. */
-private fun DrawScope.drawSubsystemFrame(alpha: Float) {
-    val len = 14.dp.toPx()
-    val stroke = 1.3.dp.toPx()
-    val col = White.copy(alpha = 0.5f * alpha)
-    val w = size.width
-    val h = size.height
-    // TL / TR / BL / BR corner brackets
-    drawLine(col, Offset(0f, 0f), Offset(len, 0f), stroke)
-    drawLine(col, Offset(0f, 0f), Offset(0f, len), stroke)
-    drawLine(col, Offset(w, 0f), Offset(w - len, 0f), stroke)
-    drawLine(col, Offset(w, 0f), Offset(w, len), stroke)
-    drawLine(col, Offset(0f, h), Offset(len, h), stroke)
-    drawLine(col, Offset(0f, h), Offset(0f, h - len), stroke)
-    drawLine(col, Offset(w, h), Offset(w - len, h), stroke)
-    drawLine(col, Offset(w, h), Offset(w, h - len), stroke)
-    // Hairline top/bottom rails between the brackets.
-    drawLine(TacticalCyan.copy(alpha = 0.10f * alpha), Offset(len + 6f, 0f), Offset(w - len - 6f, 0f), 0.8f)
-    drawLine(TacticalCyan.copy(alpha = 0.10f * alpha), Offset(len + 6f, h), Offset(w - len - 6f, h), 0.8f)
-}
-
-/**
- * The hound head. Points live in a 0..100 box facing RIGHT, then map to the
- * canvas. Pure linear segments keep the silhouette technical, not furry.
- */
-private fun DrawScope.drawHoundHead(
-    eyePulse: Float,
-    scanPhase: Float,
-    glitchPhase: Float,
-    lockOn: Float,
-    alpha: Float,
-) {
-    val insetX = 46.dp.toPx()
-    val insetY = 20.dp.toPx()
-    val w = size.width - insetX * 2
-    val h = size.height - insetY * 2
-    fun p(x: Float, y: Float) = Offset(insetX + x / 100f * w, insetY + y / 100f * h)
-
-    // Head outline (clockwise from the nose, two alert ears for 3/4 depth).
-    val pts = listOf(
-        p(97f, 54f),  // nose tip
-        p(80f, 48f),  // muzzle top
-        p(68f, 49f),  // nose bridge / stop
-        p(62f, 41f),  // forehead
-        p(60f, 36f),  // front ear base (front)
-        p(66f, 9f),   // front ear tip
-        p(49f, 33f),  // front ear base (back)
-        p(45f, 31f),  // ear valley
-        p(42f, 30f),  // rear ear base (front)
-        p(31f, 11f),  // rear ear tip
-        p(22f, 33f),  // rear ear base (back)
-        p(18f, 41f),  // skull crown
-        p(15f, 55f),  // nape
-        p(16f, 70f),  // neck back
-        p(22f, 84f),  // neck cut (bottom-left)
-        p(44f, 82f),  // throat base
-        p(58f, 76f),  // lower jaw rear
-        p(72f, 70f),  // jaw mid
-        p(88f, 62f),  // chin
-        p(93f, 58f),  // mouth corner
-    )
-    val head = Path().apply {
-        moveTo(pts[0].x, pts[0].y)
-        for (k in 1 until pts.size) lineTo(pts[k].x, pts[k].y)
-        close()
-    }
-
-    // Holographic chromatic split — faint cyan/red offset ghosts behind white.
-    val split = 1.6.dp.toPx() * (0.6f + 0.4f * glitchPhase)
-    drawPath(head.shifted(split, 0f),  TacticalCyan.copy(alpha = 0.18f * alpha), style = Stroke(1.dp.toPx()))
-    drawPath(head.shifted(-split, 0f), DeepRed.copy(alpha = 0.16f * alpha),      style = Stroke(1.dp.toPx()))
-
-    // Panel fill + primary white outline.
-    drawPath(head, White.copy(alpha = 0.05f * alpha))
-    drawPath(head, White.copy(alpha = 0.96f * alpha), style = Stroke(1.7.dp.toPx()))
-
-    // Wireframe hint — a few interior construction lines.
-    val wire = TacticalCyan.copy(alpha = 0.16f * alpha)
-    drawLine(wire, p(64f, 49f), p(95f, 54f), 0.9f)   // eye → nose ridge
-    drawLine(wire, p(64f, 49f), p(72f, 70f), 0.9f)   // eye → jaw
-    drawLine(wire, p(40f, 38f), p(70f, 49f), 0.9f)   // skull → muzzle
-    drawLine(wire, p(30f, 46f), p(30f, 74f), 0.9f)   // neck section
-
-    // Red ears — filled wedges inside each ear outline.
-    fun wedge(a: Offset, b: Offset, c: Offset, col: Color) =
-        drawPath(Path().apply { moveTo(a.x, a.y); lineTo(b.x, b.y); lineTo(c.x, c.y); close() }, col)
-    wedge(p(60f, 35f), p(64f, 14f), p(52f, 33f), DeepRed.copy(alpha = 0.92f * alpha))  // front ear
-    wedge(p(41f, 31f), p(33f, 15f), p(26f, 32f), DeepRed.copy(alpha = 0.85f * alpha))  // rear ear
-
-    // Nostril + calm closed mouth line (no fangs — not a monster).
-    drawLine(White.copy(alpha = 0.55f * alpha), p(90f, 52f), p(86f, 53f), 1.4.dp.toPx())
-    drawLine(White.copy(alpha = 0.5f * alpha),  p(93f, 58f), p(74f, 58f), 1.1.dp.toPx())
-
-    // Glowing red eye — intensifies as the reticle locks on.
-    val eye = p(64f, 49f)
-    val glow = (0.45f + 0.55f * lockOn) * eyePulse
-    val eyeR = 3.0.dp.toPx()
-    drawCircle(EmberRed.copy(alpha = 0.35f * glow * alpha), eyeR * 3.4f, eye)
-    drawCircle(GlowRed.copy(alpha = 0.90f * glow * alpha),  eyeR * 1.7f, eye)
-    drawCircle(White.copy(alpha = 0.95f * glow * alpha),    eyeR * 0.7f, eye)
-
-    // Data-dissolve edge — the skull/neck back breaking into drifting shards.
-    val edgeX = 16f
-    for (k in 0 until 9) {
-        val ry = 26f + k * 6.3f
-        val flick = fract(glitchPhase * 1.3f + k * 0.37f)
-        val drift = flick * 16f
-        val segLen = 4f + fract(k * 0.61f + glitchPhase) * 11f
-        val x1 = edgeX - drift
-        val x0 = x1 - segLen
-        val shardAlpha = (1f - flick) * 0.5f
-        val col = if (k % 3 == 0) TacticalCyan else White
-        drawLine(col.copy(alpha = shardAlpha * alpha), p(x0, ry), p(x1, ry), 1.2.dp.toPx())
-    }
-
-    // Sweeping sensor scan-line across the head bounds.
-    val top = p(0f, 6f).y
-    val bot = p(0f, 92f).y
-    val sy = top + scanPhase * (bot - top)
-    drawLine(TacticalCyan.copy(alpha = 0.22f * alpha), Offset(insetX, sy), Offset(size.width - insetX, sy), 0.9.dp.toPx())
-    drawLine(TacticalCyan.copy(alpha = 0.06f * alpha), Offset(insetX, sy + 2f), Offset(size.width - insetX, sy + 2f), 2.4.dp.toPx())
-
-    // Targeting reticle converging on the eye (spread → tight as lockOn → 1).
-    val spread = (1f - lockOn) * 30.dp.toPx()
-    val rHalf = 16.dp.toPx() + spread
-    val arm = 7.dp.toPx()
-    val rc = TacticalCyan.copy(alpha = (0.35f + 0.45f * lockOn) * alpha)
-    fun bracket(cx: Float, cy: Float, dx: Float, dy: Float) {
-        drawLine(rc, Offset(cx, cy), Offset(cx + dx, cy), 1.2.dp.toPx())
-        drawLine(rc, Offset(cx, cy), Offset(cx, cy + dy), 1.2.dp.toPx())
-    }
-    bracket(eye.x - rHalf, eye.y - rHalf,  arm,  arm)
-    bracket(eye.x + rHalf, eye.y - rHalf, -arm,  arm)
-    bracket(eye.x - rHalf, eye.y + rHalf,  arm, -arm)
-    bracket(eye.x + rHalf, eye.y + rHalf, -arm, -arm)
-    // Lock ring + ticks once converged.
-    if (lockOn > 0.5f) {
-        val ringA = (lockOn - 0.5f) / 0.5f
-        val rr = 13.dp.toPx()
-        val tick = 4.dp.toPx()
-        val gc = TacticalGreen.copy(alpha = 0.55f * ringA * alpha)
-        drawCircle(gc, rr, eye, style = Stroke(1.dp.toPx()))
-        drawLine(gc, Offset(eye.x, eye.y - rr - tick), Offset(eye.x, eye.y - rr + tick), 1.dp.toPx())
-        drawLine(gc, Offset(eye.x, eye.y + rr - tick), Offset(eye.x, eye.y + rr + tick), 1.dp.toPx())
-        drawLine(gc, Offset(eye.x - rr - tick, eye.y), Offset(eye.x - rr + tick, eye.y), 1.dp.toPx())
-        drawLine(gc, Offset(eye.x + rr - tick, eye.y), Offset(eye.x + rr + tick, eye.y), 1.dp.toPx())
-    }
-}
-
-/** Text read-outs around the subsystem (absolute px positions). */
-private fun DrawScope.drawSubsystemLabels(lockOn: Float, eyePulse: Float, alpha: Float) {
-    drawTacticalText("CWN ANNWN", 6.dp.toPx(), 22.dp.toPx(), 10f, White.copy(alpha = 0.85f * alpha))
-    drawTacticalText("TRK SUBSYS", 6.dp.toPx(), 33.dp.toPx(), 8f, TacticalCyan.copy(alpha = 0.70f * alpha))
-    val locked = lockOn > 0.85f
-    val lockTxt = if (locked) "TGT LOCK 0.98" else "ACQUIRING"
-    val lockCol = if (locked) TacticalGreen else TacticalAmber
-    drawTacticalText(
-        lockTxt,
-        size.width - 92.dp.toPx(),
-        22.dp.toPx(),
-        9f,
-        lockCol.copy(alpha = (0.6f + 0.4f * eyePulse) * alpha),
-    )
-    drawTacticalText("SENSOR · GPS/IR", 6.dp.toPx(), size.height - 8.dp.toPx(), 8f, TacticalAmber.copy(alpha = 0.55f * alpha))
-    drawTacticalText("PURSUIT · VIGILANCE", size.width - 118.dp.toPx(), size.height - 8.dp.toPx(), 8f, MapInk.copy(alpha = 0.45f * alpha))
-}
-
-/** A copy of this path translated by ([dx], [dy]) — for the chromatic ghosts. */
-private fun Path.shifted(dx: Float, dy: Float): Path =
-    Path().apply { addPath(this@shifted, Offset(dx, dy)) }
-
-/** Fractional part, for the data-dissolve shard hashing. */
-private fun fract(v: Float): Float = v - floor(v)
 
 // ---------------------------------------------------------------------------
 //  Bottom data ticker
